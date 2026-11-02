@@ -95,3 +95,40 @@ def test_expired_unknown_and_revoked_sessions(client):
 
 def test_health_is_public(client):
     assert client.get("/health").status_code == 200
+
+
+def test_project_crud_persists_without_invented_predictions(client):
+    headers = authenticated_headers()
+    payload = {'project_code': 'PERSIST-1', 'name': 'Saved project', 'state': 'West Bengal',
+               'district': 'Kolkata', 'authority': 'Test agency', 'project_type': 'Highway',
+               'land_required': 100, 'affected_families': 20, 'current_stage': 'Notification'}
+    response = client.post('/api/projects', headers=headers, json=payload)
+    assert response.status_code == 201
+    project = response.json()
+    for field in ('risk_score', 'delay_probability', 'predicted_delay_days', 'confidence'):
+        assert project[field] is None
+    project_id = project['id']
+    # A fresh HTTP client reads the persisted record, independent of process-local arrays.
+    fresh_client = TestClient(app)
+    assert fresh_client.get(f'/api/projects/{project_id}', headers=headers).json()['name'] == 'Saved project'
+    assert fresh_client.patch(f'/api/projects/{project_id}', headers=headers, json={'name': 'Updated'}).status_code == 200
+    assert client.get(f'/api/projects/{project_id}', headers=headers).json()['name'] == 'Updated'
+    assert client.get(f'/api/projects/{project_id}/risk', headers=headers).json()['risk_score'] is None
+    assert client.post('/api/projects', headers=headers, json=payload).status_code == 409
+    assert client.delete(f'/api/projects/{project_id}', headers=headers).status_code == 204
+    assert fresh_client.get(f'/api/projects/{project_id}', headers=headers).status_code == 404
+
+
+def test_acknowledgement_is_persisted(client):
+    from models import Alert, Project
+    headers = authenticated_headers()
+    with SessionLocal() as db:
+        db.add(Project(id='p', project_code='p', name='Project', state='WB', district='Kolkata',
+                       authority='Agency', project_type='Highway'))
+        db.flush()
+        db.add(Alert(id='a', project_id='p', severity='High', reason='Needs review'))
+        db.commit()
+    assert client.post('/api/alerts/a/acknowledge', headers=headers).status_code == 200
+    with SessionLocal() as db:
+        assert db.get(Alert, 'a').status == 'Acknowledged'
+    assert client.post('/api/alerts/missing/acknowledge', headers=headers).status_code == 404

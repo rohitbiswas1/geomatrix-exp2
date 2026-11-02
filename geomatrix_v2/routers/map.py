@@ -96,3 +96,8 @@ def map_summary(db: Session = Depends(get_db)):
         "projects_with_coordinates": with_coords,
         "projects_without_coordinates": total - with_coords,
     }
+
+
+@router.get("/projects")
+def map_projects(db: Session = Depends(get_db)):
+    return {"data": get_geojson(None, db).model_dump()["features"]}

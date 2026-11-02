@@ -1,5 +1,5 @@
 """Geomatrix v2 Alerts Router"""
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -41,3 +41,13 @@ def alerts_summary(db: Session = Depends(get_db)):
         "critical": critical,
         "high": high,
     }
+
+
+@router.post("/{alert_id}/acknowledge")
+def acknowledge_alert(alert_id: str, db: Session = Depends(get_db)):
+    alert = db.get(Alert, alert_id)
+    if alert is None:
+        raise HTTPException(404, "Alert not found")
+    alert.status = "Acknowledged"
+    db.commit()
+    return {"id": alert.id, "status": alert.status}

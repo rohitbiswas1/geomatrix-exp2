@@ -1,9 +1,3 @@
-import { checkOrigin, requireBackendSession } from '../../../../lib/backend';
-import { NextResponse } from 'next/server';
-import { buildDashboardSummary } from '../../_demo-data';
+import { proxyBackend } from '../../../../lib/backend';
 
-export async function GET() {
-  const authError = await requireBackendSession(); if (authError) return authError;
-
-  return NextResponse.json(buildDashboardSummary());
-}
+export const GET = proxyBackend;
