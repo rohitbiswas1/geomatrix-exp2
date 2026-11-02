@@ -394,7 +394,7 @@ def _build_project_row(row, source_name, source_url, warnings):
     if len(observed) < 3:
         warnings.add("Some acquisition inputs were not reported. Supply verified land area, affected families and acquisition stage before prediction.")
     row_source = _normalize_string(_field_value(row, "source_url")) or source_url
-    if row_source and not row_source.startswith(("https://", "http://")):
+    if _field_value(row, "source_url") and not row_source.startswith(("https://", "http://")):
         raise ValueError("source_url must use http or https")
     project = Project(
         source_details=details,

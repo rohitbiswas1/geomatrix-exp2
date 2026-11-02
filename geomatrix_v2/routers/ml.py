@@ -49,7 +49,7 @@ def get_training_data(db: Session = Depends(get_db)):
         "ready_to_train": total >= MIN_SAMPLES and min(delayed, on_time) >= 2 and has_variation,
         "excluded_records": excluded,
         "message": (
-            f"{total} eligible real labeled records ({delayed} delayed, {on_time} on-time); {excluded} legacy or non-real records excluded."
+            f"{total} eligible real labeled records ({delayed} delayed, {on_time} on-time); {excluded} legacy or non-real records excluded." + (" Acquisition inputs are missing or constant; supply verified features before training." if not has_variation else "")
             if total > 0
             else "No eligible historical records. Upload or re-import original labeled source data; legacy and synthetic rows cannot be used."
         )
