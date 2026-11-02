@@ -88,11 +88,11 @@ test('blocked Google script offers a working retry', async () => {
     return route.fulfill({ contentType: 'application/javascript', body: googleScript });
   } });
   try {
-    await visible(page.getByRole('alert'));
+    await visible(page.locator('.error-alert'));
     await page.getByRole('button', { name: 'Retry Google sign-in', exact: true }).click();
     await visible(page.getByRole('button', { name: 'Continue with Google', exact: true }));
     assert.equal(state.scripts, 2);
-    assert.equal(await page.getByRole('alert').count(), 0);
+    assert.equal(await page.locator('.error-alert').count(), 0);
   } finally { await context.close(); }
 });
 
