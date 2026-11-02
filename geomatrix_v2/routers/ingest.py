@@ -8,6 +8,10 @@ import io
 import json
 import uuid
 import logging
+import math
+from typing import Literal
+from sqlalchemy import or_, and_
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from datetime import datetime
 from typing import List, Any, Dict
 
@@ -255,207 +259,296 @@ async def ingest_from_datagovin(
                         errors=errors, status=status)
 
 
+
+
+def _save_historical_row(db, row, source_name, source_url, errors, row_number):
+    project_code = _field_value(row, "project_code", "project_id", "source_record_id", "id")
+    state = _field_value(row, "state", "state_or_region", "state_name")
+    project_type = _field_value(row, "project_type", "sector")
+    if project_code is None or state is None or project_type is None:
+        errors.append(f"Row {row_number}: missing required historical fields")
+        return False
+
+    actual_days_value = _field_value(row, "actual_delay_days", "days_to_original_deadline", "delay_days", "delay_months_original")
+    delayed_value = _field_value(row, "delayed", "delay_flag", "land_acquisition_delay_flag")
+    if delayed_value is None:
+        errors.append(f"Row {row_number}: missing delayed label")
+        return False
+
+    record_id = _normalize_string(_field_value(row, "source_record_id", "id", "project_code", "project_id"))
+    if not record_id:
+        errors.append(f"Row {row_number}: missing source_record_id")
+        return False
+
+    existing = db.query(HistoricalDelayRecord).filter_by(source_record_id=record_id).first()
+    if existing and existing.training_data_version >= 2:
+        return False
+
+    actual_days = _coerce_int(actual_days_value, default=0)
+    if _field_value(row, "actual_delay_days") is None and _field_value(row, "delay_months_original") is not None:
+        months = _coerce_int(_field_value(row, "delay_months_original"), default=0)
+        if months > 0:
+            actual_days = months * 30
+
+    delayed = _coerce_bool(delayed_value)
+    if delayed is None:
+        errors.append(f"Row {row_number}: delayed must be an explicit boolean label")
+        return False
+
+    approval_pending = _coerce_bool(_field_value(row, "approval_pending", "approval_pending_flag"))
+    if approval_pending is None:
+        approval_pending = None  # Missing inputs must never be inferred from the target label.
+
+    classification = _classification_for_record(row, source_name)
+
+    if existing:
+        # Replace legacy data using the original source, not by trying
+        # to guess which stored feature values were derived from labels.
+        db.delete(existing)
+    rec = HistoricalDelayRecord(
+        training_data_version=2,
+        id=str(uuid.uuid4()),
+        project_code=_normalize_string(project_code)[:50],
+        state=_normalize_string(state)[:100],
+        project_type=_normalize_string(project_type)[:100],
+        land_area_ha=_coerce_float(_field_value(row, "land_area_ha", "land_required_ha", "land_required")),
+        affected_families=_coerce_int(_field_value(row, "affected_families", "families_affected", "families")),
+        pending_claims=_coerce_int(_field_value(row, "pending_claims", "objection_count", "claims_pending")),
+        legal_cases=_coerce_int(_field_value(row, "legal_cases", "case_count", "court_cases")),
+        doc_completeness_pct=_coerce_float(_field_value(row, "doc_completeness_pct", "document_completeness_pct", "physical_progress_pct"), default=50.0),
+        approval_pending=approval_pending,
+        rr_pending=_coerce_int(_field_value(row, "rr_pending", "rr_pending_count")),
+        overdue_milestones=_coerce_int(_field_value(row, "overdue_milestones", "overdue_milestone_count")),
+        actual_delay_days=actual_days,
+        delayed=delayed,
+        validation_status="validated",
+        data_classification=classification,
+        source_name=source_name,
+        source_url=source_url,
+        source_record_id=record_id,
+    )
+    db.add(rec)
+    return True
+
+
+MAX_UPLOAD_BYTES = 4 * 1024 * 1024
+MAX_UPLOAD_ROWS = 5000
+
+
+def _upload_number(row, *fields, default=0.0, integer=False, minimum=0, maximum=None):
+    raw = _field_value(row, *fields)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        value = float(str(raw).replace(",", "").strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"{fields[0]} must be a number") from None
+    if not math.isfinite(value) or (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
+        raise ValueError(f"{fields[0]} is outside the permitted range")
+    if integer and not value.is_integer():
+        raise ValueError(f"{fields[0]} must be a whole number")
+    return int(value) if integer else value
+
+
+def _build_project_row(row, source_name, source_url, warnings):
+    code = _normalize_string(_field_value(row, "project_code", "project_id", "source_record_id", "id"))
+    name = _normalize_string(_field_value(row, "name", "project_name", "canonical_project_name", "source_project_name"))
+    state = _normalize_string(_field_value(row, "state", "state_or_region", "state_name"))
+    missing = [label for label, value in [("project_code (or project_id)", code), ("name (or project_name)", name), ("state", state)] if not value]
+    if missing:
+        raise ValueError("missing required fields: " + ", ".join(missing))
+    record_id = _normalize_string(_field_value(row, "source_record_id", "project_code", "project_id", "id"))
+
+    project_type = _normalize_string(_field_value(row, "project_type", "sector"))
+    if not project_type:
+        warnings.add("Missing project_type values were stored as Unknown. You can edit these projects later.")
+    area = _upload_number(row, "land_required", "land_required_ha", "land_area_ha", default=None)
+    if area is None:
+        acres = _upload_number(row, "land_area_acres", default=None)
+        area = acres * 0.40468564224 if acres is not None else 0.0
+        if acres is not None:
+            warnings.add("land_area_acres was converted to hectares for land_required.")
+    if _field_value(row, "risk_level", "risk_score") is not None:
+        warnings.add("Uploaded risk labels are not treated as model predictions. Run risk analysis after importing.")
+    lat = _upload_number(row, "latitude", "lat", default=None, minimum=-90, maximum=90)
+    lng = _upload_number(row, "longitude", "lon", "lng", default=None, minimum=-180, maximum=180)
+    project = Project(
+        id=str(uuid.uuid4()), project_code=code, name=name, state=state,
+        district=_normalize_string(_field_value(row, "district", "district_name")) or "Unknown",
+        authority=_normalize_string(_field_value(row, "authority", "implementing_agency", "agency")) or "Unknown",
+        project_type=project_type or "Unknown",
+        description=_normalize_string(_field_value(row, "description")) or None,
+        latitude=lat, longitude=lng, land_required=area,
+        land_acquired=_upload_number(row, "land_acquired", "land_acquired_ha"),
+        affected_families=_upload_number(row, "affected_families", "families_affected", integer=True, default=0),
+        current_stage=_normalize_string(_field_value(row, "current_stage", "stage", "current_acquisition_stage")) or "Unknown",
+        status=_normalize_string(_field_value(row, "status", "project_status")) or "Active",
+        compensation_status=_normalize_string(_field_value(row, "compensation_status", "compensation_issue")) or None,
+        objection_count=_upload_number(row, "objection_count", "public_objection_issue", integer=True, default=0),
+        legal_case_count=_upload_number(row, "legal_case_count", "legal_cases", "legal_disputes_count", "legal_issue", integer=True, default=0),
+        rr_status=_normalize_string(_field_value(row, "rr_status")) or None,
+        env_clearance_status=_normalize_string(_field_value(row, "env_clearance_status", "environment_clearance_status", "environmental_clearance")) or None,
+        forest_clearance_status=_normalize_string(_field_value(row, "forest_clearance_status", "forest_clearance_issue")) or None,
+        crz_status=_normalize_string(_field_value(row, "crz_status")) or None,
+        doc_completeness_pct=_upload_number(row, "doc_completeness_pct", "physical_progress_pct", default=50.0, maximum=100),
+        approval_pending=_coerce_bool(_field_value(row, "approval_pending", "approval_issue")),
+        overdue_milestones=_upload_number(row, "overdue_milestones", integer=True, default=0),
+        validation_status="validated", data_classification=_classification_for_record(row, source_name),
+        source_name=source_name, source_url=source_url, source_record_id=record_id,
+    )
+    return project
+
+
+def _store_project_rows(db, rows, filename, source_url, warnings, errors, extension):
+    pending = []
+    failed = duplicates = saved = 0
+    for index, row in enumerate(rows):
+        number = index + 2 if extension == "csv" else index + 1
+        try:
+            if None in row:
+                raise ValueError("extra values do not match the CSV header; quote values containing commas")
+            pending.append((number, _build_project_row(row, filename, source_url, warnings)))
+        except (ValueError, TypeError, OverflowError) as exc:
+            errors.append(f"Row {number}: {exc}")
+            failed += 1
+
+    codes = [p.project_code for _, p in pending]
+    source_ids = [p.source_record_id for _, p in pending]
+    known_codes, known_sources = set(), set()
+    for start in range(0, len(pending), 200):
+        existing = db.query(Project.project_code, Project.source_record_id, Project.source_name).filter(
+            or_(Project.project_code.in_(codes[start:start + 200]),
+                and_(Project.source_record_id.in_(source_ids[start:start + 200]), Project.source_name == filename))).all()
+        for code, record_id, source_name in existing:
+            known_codes.add(code)
+            known_sources.add((record_id, source_name))
+    unique = []
+    for number, project in pending:
+        identity = (project.source_record_id, filename)
+        if project.project_code in known_codes or identity in known_sources:
+            duplicates += 1
+        else:
+            known_codes.add(project.project_code)
+            known_sources.add(identity)
+            unique.append((number, project))
+
+    # Most files need one batch insert rather than a round trip for every row.
+    for start in range(0, len(unique), 100):
+        batch = unique[start:start + 100]
+        try:
+            with db.begin_nested():
+                db.add_all([project for _, project in batch])
+                db.flush()
+            saved += len(batch)
+        except IntegrityError:
+            # Handle a concurrent upload winning a unique code without dropping
+            # the other valid records in this batch.
+            for number, project in batch:
+                try:
+                    with db.begin_nested():
+                        db.add(project)
+                        db.flush()
+                    saved += 1
+                except IntegrityError as exc:
+                    if getattr(exc.orig, "sqlstate", None) == "23505" or "UNIQUE constraint failed" in str(exc.orig):
+                        duplicates += 1
+                    else:
+                        failed += 1
+                        errors.append(f"Row {number}: could not save this record. Check its field values.")
+    return saved, duplicates, failed
+
+
 @router.post("/upload", response_model=IngestResult)
 async def upload_csv(
     file: UploadFile = File(...),
-    data_type: str = Query("projects", description="'projects' or 'historical'"),
-    db: Session = Depends(get_db)
+    data_type: Literal["projects", "historical"] = Query("projects"),
+    db: Session = Depends(get_db),
 ):
-    """
-    Upload a CSV file to import project data or historical labeled records.
-
-    For 'projects': columns should include name, state, district, authority,
-                    project_type, latitude, longitude, land_required, affected_families,
-                    current_stage, status
-
-    For 'historical': columns should include project_code, state, project_type,
-                      land_area_ha, affected_families, pending_claims, legal_cases,
-                      doc_completeness_pct, approval_pending, rr_pending,
-                      overdue_milestones, actual_delay_days, delayed
-    """
+    """Import CSV/JSON records, returning only counts of rows actually committed."""
     filename = file.filename or "upload"
+    extension = filename.rsplit(".", 1)[-1].lower()
+    if extension not in {"csv", "json"}:
+        raise HTTPException(400, "Choose a CSV or JSON records file. Save Excel sheets as CSV first.")
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Files must be 4 MB or smaller. Split larger files before uploading.")
     source_url = f"file_upload:{filename}"
-    source_name = filename
     log_entry = _log_start(db, f"csv_{data_type}", source_url)
-
-    if not (filename.endswith(".csv") or filename.endswith(".json")):
-        raise HTTPException(400, "Only CSV or JSON files accepted")
-
-    content = await file.read()
-
-    errors: List[str] = []
-    saved = skipped = 0
-    rows = []
-
+    errors, warnings = [], set()
     try:
-        if filename.endswith(".json"):
-            payload = json.loads(content.decode("utf-8-sig"))
-            rows = _extract_rows_from_payload(payload)
+        text = content.decode("utf-8-sig")
+        if extension == "json":
+            payload = json.loads(text)
+            rows = payload.get("records") if isinstance(payload, dict) and "records" in payload else payload
+            if isinstance(rows, dict):
+                rows = [rows]
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise ValueError("JSON must contain a list of record objects or an object with a records list.")
         else:
-            text = content.decode("utf-8-sig")
-            reader = csv.DictReader(io.StringIO(text))
-            rows = list(reader)
-    except Exception as e:
-        errors.append(f"File parse error: {str(e)}")
+            try:
+                dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t")
+            except csv.Error:
+                dialect = csv.excel
+            reader = csv.DictReader(io.StringIO(text, newline=""), dialect=dialect, strict=True)
+            rows = [row for row in reader if any(str(v).strip() for v in row.values() if v is not None)]
+        if not rows:
+            raise ValueError("No records found. Include a header and at least one data row.")
+        if len(rows) > MAX_UPLOAD_ROWS:
+            raise ValueError(f"Upload at most {MAX_UPLOAD_ROWS} records at a time.")
+    except (UnicodeError, ValueError, csv.Error) as exc:
+        message = "Save the file as UTF-8 CSV or JSON." if isinstance(exc, UnicodeError) else str(exc)
+        errors = ["File could not be read: " + message]
         _log_finish(db, log_entry, 0, 0, 0, errors, "failed")
-        return IngestResult(source=f"csv_{data_type}", records_fetched=0,
-                            records_saved=0, records_skipped=0, errors=errors, status="failed")
+        return IngestResult(source=f"csv_{data_type}", records_fetched=0, records_saved=0,
+                            records_skipped=0, errors=errors, status="failed")
 
-    for i, row in enumerate(rows):
-        try:
-            if data_type == "historical":
-                project_code = _field_value(row, "project_code", "project_id", "source_record_id", "id")
-                state = _field_value(row, "state", "state_or_region", "state_name")
-                project_type = _field_value(row, "project_type", "sector")
-                if project_code is None or state is None or project_type is None:
-                    errors.append(f"Row {i+2}: missing required historical fields")
-                    skipped += 1
-                    continue
-
-                actual_days_value = _field_value(row, "actual_delay_days", "days_to_original_deadline", "delay_days", "delay_months_original")
-                delayed_value = _field_value(row, "delayed", "delay_flag", "land_acquisition_delay_flag")
-                if delayed_value is None:
-                    errors.append(f"Row {i+2}: missing delayed label")
-                    skipped += 1
-                    continue
-
-                record_id = _normalize_string(_field_value(row, "source_record_id", "id", "project_code", "project_id"))
-                if not record_id:
-                    errors.append(f"Row {i+2}: missing source_record_id")
-                    skipped += 1
-                    continue
-
-                existing = db.query(HistoricalDelayRecord).filter_by(source_record_id=record_id).first()
-                if existing and existing.training_data_version >= 2:
-                    skipped += 1
-                    continue
-
-                actual_days = _coerce_int(actual_days_value, default=0)
-                if _field_value(row, "actual_delay_days") is None and _field_value(row, "delay_months_original") is not None:
-                    months = _coerce_int(_field_value(row, "delay_months_original"), default=0)
-                    if months > 0:
-                        actual_days = months * 30
-
-                delayed = _coerce_bool(delayed_value)
-                if delayed is None:
-                    errors.append(f"Row {i+2}: delayed must be an explicit boolean label")
-                    skipped += 1
-                    continue
-
-                approval_pending = _coerce_bool(_field_value(row, "approval_pending", "approval_pending_flag"))
-                if approval_pending is None:
-                    approval_pending = None  # Missing inputs must never be inferred from the target label.
-
-                classification = _classification_for_record(row, source_name)
-
-                if existing:
-                    # Replace legacy data using the original source, not by trying
-                    # to guess which stored feature values were derived from labels.
-                    db.delete(existing)
-                rec = HistoricalDelayRecord(
-                    training_data_version=2,
-                    id=str(uuid.uuid4()),
-                    project_code=_normalize_string(project_code)[:50],
-                    state=_normalize_string(state)[:100],
-                    project_type=_normalize_string(project_type)[:100],
-                    land_area_ha=_coerce_float(_field_value(row, "land_area_ha", "land_required_ha", "land_required")),
-                    affected_families=_coerce_int(_field_value(row, "affected_families", "families_affected", "families")),
-                    pending_claims=_coerce_int(_field_value(row, "pending_claims", "objection_count", "claims_pending")),
-                    legal_cases=_coerce_int(_field_value(row, "legal_cases", "case_count", "court_cases")),
-                    doc_completeness_pct=_coerce_float(_field_value(row, "doc_completeness_pct", "document_completeness_pct", "physical_progress_pct"), default=50.0),
-                    approval_pending=approval_pending,
-                    rr_pending=_coerce_int(_field_value(row, "rr_pending", "rr_pending_count")),
-                    overdue_milestones=_coerce_int(_field_value(row, "overdue_milestones", "overdue_milestone_count")),
-                    actual_delay_days=actual_days,
-                    delayed=delayed,
-                    validation_status="validated",
-                    data_classification=classification,
-                    source_name=source_name,
-                    source_url=source_url,
-                    source_record_id=record_id,
-                )
-                db.add(rec)
-                saved += 1
-
-            else:  # projects
-                project_code = _field_value(row, "project_code", "project_id", "source_record_id", "id")
-                name = _field_value(row, "name", "project_name", "canonical_project_name", "source_project_name")
-                state = _field_value(row, "state", "state_or_region", "state_name")
-                project_type = _field_value(row, "project_type", "sector")
-                authority = _field_value(row, "authority", "implementing_agency", "agency")
-
-                if project_code is None or name is None or state is None or project_type is None:
-                    errors.append(f"Row {i+2}: missing required project fields")
-                    skipped += 1
-                    continue
-
-                record_id = _normalize_string(_field_value(row, "source_record_id", "id", "project_id", "project_code"))
-                if not record_id:
-                    errors.append(f"Row {i+2}: missing project identifier")
-                    skipped += 1
-                    continue
-
-                existing = db.query(Project).filter_by(source_record_id=record_id).first()
-                if existing:
-                    skipped += 1
-                    continue
-
-                lat_raw = _field_value(row, "latitude", "lat")
-                lng_raw = _field_value(row, "longitude", "lon", "lng")
-                lat, lng = _validate_coordinates(lat_raw, lng_raw)
-
-                classification = _classification_for_record(row, source_name)
-
-                proj = Project(
-                    id=str(uuid.uuid4()),
-                    project_code=_normalize_string(project_code)[:50],
-                    name=_normalize_string(name)[:200],
-                    state=_normalize_string(state)[:100],
-                    district=_normalize_string(_field_value(row, "district", "district_name"))[:100] or "Unknown",
-                    authority=_normalize_string(authority)[:200] or "Unknown",
-                    project_type=_normalize_string(project_type)[:100],
-                    latitude=lat,
-                    longitude=lng,
-                    current_stage=_normalize_string(_field_value(row, "current_stage", "stage", "current_acquisition_stage"))[:100] or "Unknown",
-                    status=_normalize_string(_field_value(row, "status", "project_status"))[:50] or "Active",
-                    land_required=_coerce_float(_field_value(row, "land_required", "land_required_ha", "land_area_ha")),
-                    land_acquired=_coerce_float(_field_value(row, "land_acquired", "land_acquired_ha")),
-                    affected_families=_coerce_int(_field_value(row, "affected_families", "families_affected")),
-                    compensation_status=_normalize_string(_field_value(row, "compensation_status", "compensation_issue"))[:50] or None,
-                    objection_count=_coerce_int(_field_value(row, "objection_count", "public_objection_issue")),
-                    legal_case_count=_coerce_int(_field_value(row, "legal_case_count", "legal_issue")),
-                    rr_status=_normalize_string(_field_value(row, "rr_status", "rr_amount_cr"))[:50] or None,
-                    env_clearance_status=_normalize_string(_field_value(row, "env_clearance_status", "environment_clearance_status"))[:50] or None,
-                    forest_clearance_status=_normalize_string(_field_value(row, "forest_clearance_status", "forest_clearance_issue"))[:50] or None,
-                    crz_status=_normalize_string(_field_value(row, "crz_status"))[:50] or None,
-                    doc_completeness_pct=_coerce_float(_field_value(row, "doc_completeness_pct", "physical_progress_pct"), default=50.0),
-                    approval_pending=_coerce_bool(_field_value(row, "approval_pending", "approval_issue")),
-                    overdue_milestones=_coerce_int(_field_value(row, "overdue_milestones", "days_to_original_deadline")),
-                    validation_status="validated",
-                    data_classification=classification,
-                    source_name=source_name,
-                    source_url=source_url,
-                    source_record_id=record_id,
-                )
-                db.add(proj)
-                saved += 1
-
-        except Exception as e:
-            errors.append(f"Row {i+2}: {str(e)[:100]}")
-            skipped += 1
-
+    saved = duplicates = failed = 0
     try:
+        connection = db.connection()
+        # sqlite3's legacy mode otherwise commits a top-level SAVEPOINT when
+        # released, preventing an outer rollback from undoing the upload.
+        if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN")
+        if data_type == "projects":
+            saved, duplicates, failed = _store_project_rows(db, rows, filename, source_url, warnings, errors, extension)
+        else:
+            for index, row in enumerate(rows):
+                row_number = index + 2 if extension == "csv" else index + 1
+                before = len(errors)
+                try:
+                    if None in row:
+                        raise ValueError("extra values do not match the CSV header; quote values containing commas")
+                    with db.begin_nested():
+                        imported = _save_historical_row(db, row, filename, source_url, errors, row_number)
+                        db.flush()
+                    if imported:
+                        saved += 1
+                    elif len(errors) > before:
+                        failed += 1
+                    else:
+                        duplicates += 1
+                except IntegrityError:
+                    # A concurrent upload can win the unique project-code constraint.
+                    duplicates += 1
+                except ValueError as exc:
+                    errors.append(f"Row {row_number}: {exc}")
+                    failed += 1
+                except (SQLAlchemyError, TypeError, OverflowError) as exc:
+                    logger.error("Upload row failed: %s", type(exc).__name__)
+                    errors.append(f"Row {row_number}: could not save this record. Check its field values and retry.")
+                    failed += 1
         db.commit()
-    except Exception as e:
+    except SQLAlchemyError as exc:
         db.rollback()
-        errors.append(f"DB commit error: {str(e)[:100]}")
-
-    status = "success" if not errors else "partial"
+        logger.error("Upload commit failed: %s", type(exc).__name__)
+        saved, duplicates, failed = 0, 0, len(rows)
+        errors = ["Database save failed. No records were imported. Please retry the upload."]
+    status = "failed" if failed and not saved else "partial" if failed else "success"
+    skipped = duplicates + failed
     _log_finish(db, log_entry, len(rows), saved, skipped, errors, status)
-
-    return IngestResult(source=f"csv_{data_type}", records_fetched=len(rows),
-                        records_saved=saved, records_skipped=skipped,
-                        errors=errors, status=status)
+    return IngestResult(source=f"csv_{data_type}", records_fetched=len(rows), records_saved=saved,
+                        records_skipped=skipped, records_duplicated=duplicates, records_failed=failed,
+                        errors=errors[:20], warnings=sorted(warnings), status=status)
 
 
 @router.get("/log", response_model=list[IngestionLogOut])

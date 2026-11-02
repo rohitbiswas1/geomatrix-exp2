@@ -1,0 +1,39 @@
+name: Upload browser checks
+on:
+  push:
+    branches: [main, fix/project-upload]
+    paths: ['app/projects/**', 'app/data/**', 'components/UploadSummary.tsx', 'lib/apiClient.ts', 'lib/uploads.ts', 'lib/authErrors.ts', 'tests/upload-ui.test.mjs', '.github/workflows/upload-ui.yml']
+  pull_request:
+    paths: ['app/projects/**', 'app/data/**', 'components/UploadSummary.tsx', 'lib/apiClient.ts', 'lib/uploads.ts', 'lib/authErrors.ts', 'tests/upload-ui.test.mjs', '.github/workflows/upload-ui.yml']
+permissions:
+  contents: read
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false playwright@1.56.1
+      - run: npx playwright install --with-deps chromium
+      - name: Start isolated upload test server
+        env:
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: test-client
+          NEXT_PUBLIC_GOOGLE_AUTH_ENABLED: 'true'
+          NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
+        run: |
+          npm run dev -- --hostname 127.0.0.1 > /tmp/geomatrix-upload-dev.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:3000/projects > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat /tmp/geomatrix-upload-dev.log
+          exit 1
+      - run: node --test tests/upload-ui.test.mjs
+      - name: Show server diagnostics after failure
+        if: failure()
+        run: cat /tmp/geomatrix-upload-dev.log || true

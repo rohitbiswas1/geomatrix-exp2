@@ -1,12 +1,17 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Upload, CheckCircle2, Database, AlertCircle, RefreshCw, FileText, Trash2 } from 'lucide-react';
-import { uploadFile, fetchIngestionLog, fetchTrainingDataSummary, fetchDashboardSummary, IngestionLogEntry } from '../../lib/apiClient';
+import { uploadFile, fetchIngestionLog, fetchTrainingDataSummary, fetchDashboardSummary, IngestionLogEntry, type IngestResult } from '../../lib/apiClient';
 
-type FileStatus = 'uploading' | 'validating' | 'ready' | 'error';
+import UploadSummary from '../../components/UploadSummary';
+import { UPLOAD_ACCEPT } from '../../lib/uploads';
+
+type FileStatus = 'uploading' | 'validating' | 'ready' | 'partial' | 'error';
 
 interface UploadedFile {
+  id: string;
+  result?: IngestResult;
   name: string;
   size: string;
   type: string;
@@ -23,7 +28,7 @@ const PIPELINE_STEPS = [
   { label: 'Validated', desc: 'Schema & field validation', done: true },
   { label: 'Cleaned', desc: 'Duplicate & null handling', done: true },
   { label: 'Feature Engineered', desc: 'Risk feature extraction', done: true },
-  { label: 'Ready for Prediction', desc: 'Model inference queue', done: false },
+  { label: 'Records Imported', desc: 'Model inference queue', done: false },
 ];
 
 
@@ -35,6 +40,9 @@ function formatSize(bytes: number): string {
 }
 
 export default function DataPage() {
+  const uploadInFlight = useRef(false);
+  const fileSequence = useRef(0);
+  const [uploading, setUploading] = useState(false);
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [activeTab, setActiveTab] = useState<'upload' | 'quality' | 'pipeline' | 'nlp'>('upload');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -47,10 +55,10 @@ export default function DataPage() {
 
   const loadDataInfo = useCallback(async () => {
     try {
-      const logs = await fetchIngestionLog(15);
-      if (logs && logs.length > 0) setUploadLogs(logs);
-      const trainSummary = await fetchTrainingDataSummary();
-      const dashSummary = await fetchDashboardSummary();
+      const [logs, trainSummary, dashSummary] = await Promise.all([
+        fetchIngestionLog(15), fetchTrainingDataSummary(), fetchDashboardSummary(),
+      ]);
+      setUploadLogs(logs);
       setRealQuality({
         totalProjects: dashSummary.total_projects,
         historicalRecords: trainSummary.total_records,
@@ -64,43 +72,36 @@ export default function DataPage() {
     loadDataInfo();
   }, [loadDataInfo]);
 
-  async function handleFileAdd(e: React.ChangeEvent<HTMLInputElement>) {
-    if (!e.target.files) return;
-    const selectedFiles = Array.from(e.target.files);
-    for (const file of selectedFiles) {
-      const entry: UploadedFile = {
-        name: file.name,
-        size: formatSize(file.size),
-        type: file.name.split('.').pop()?.toUpperCase() || 'FILE',
-        status: 'uploading',
-      };
-      setFiles(prev => [...prev, entry]);
-
-      try {
-        const result = await uploadFile(file, uploadDataType);
-        setFiles(prev => prev.map(f => f.name === file.name ? {
-          ...f,
-          status: result.status === 'failed' ? 'error' : 'ready',
-          rows: result.records_saved,
-          errors: result.records_skipped,
-          missingFields: result.missing_fields,
-          completenessPct: result.completeness_pct,
-          errorMessage: result.errors?.length ? result.errors[0] : undefined,
-        } : f));
-      } catch (err: any) {
-        setFiles(prev => prev.map(f => f.name === file.name ? {
-          ...f,
-          status: 'error',
-          errorMessage: err?.message || 'Upload failed',
-        } : f));
+  async function addFiles(selected: File[]) {
+    if (!selected.length || uploadInFlight.current) return;
+    uploadInFlight.current = true; setUploading(true);
+    const dataType = uploadDataType;
+    try {
+      for (const file of selected) {
+        const id = String(++fileSequence.current);
+        setFiles(prev => [...prev, { id, name: file.name, size: formatSize(file.size), type: file.name.split('.').pop()?.toUpperCase() || 'FILE', status: 'uploading' }]);
+        try {
+          const result = await uploadFile(file, dataType);
+          setFiles(prev => prev.map(entry => entry.id === id ? {
+            ...entry, result, status: result.status === 'failed' ? 'error' : result.status === 'partial' ? 'partial' : 'ready',
+            rows: result.records_saved, errors: result.records_failed ?? 0,
+            missingFields: result.missing_fields, completenessPct: result.completeness_pct,
+          } : entry));
+        } catch (error) {
+          setFiles(prev => prev.map(entry => entry.id === id ? { ...entry, status: 'error', errorMessage: error instanceof Error ? error.message : 'Upload failed. Please try again.' } : entry));
+        }
       }
-    }
-    loadDataInfo();
-    e.target.value = '';
+      await loadDataInfo();
+    } finally { uploadInFlight.current = false; setUploading(false); }
   }
 
-  function removeFile(name: string) {
-    setFiles(prev => prev.filter(f => f.name !== name));
+  async function handleFileAdd(event: React.ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    try { await addFiles(Array.from(input.files || [])); } finally { input.value = ''; }
+  }
+
+  function removeFile(id: string) {
+    setFiles(prev => prev.filter(file => file.id !== id));
   }
 
   function refreshQuality() {
@@ -108,21 +109,22 @@ export default function DataPage() {
     loadDataInfo().finally(() => setIsRefreshing(false));
   }
 
-  const readyFiles = useMemo(() => files.filter(f => f.status === 'ready').length, [files]);
+  const readyFiles = useMemo(() => files.filter(f => (f.rows ?? 0) > 0).length, [files]);
   const qualityMetrics = useMemo(() => {
-    const totalRecords = files.reduce((sum, file) => sum + (file.rows || 0), 0);
+    const totalRecords = files.reduce((sum, file) => sum + (file.result?.records_fetched || 0), 0);
+    const imported = files.reduce((sum, file) => sum + (file.rows || 0), 0);
+    const duplicates = files.reduce((sum, file) => sum + (file.result?.records_duplicated || 0), 0);
     const failedRecords = files.reduce((sum, file) => sum + (file.errors || 0), 0);
-    const missingFields = files.reduce((sum, file) => sum + (file.missingFields || 0), 0);
     const hasData = files.length > 0;
-    const validRecords = Math.max(0, totalRecords - failedRecords);
+    const validRecords = imported;
     const score = totalRecords > 0 ? Math.round((validRecords / totalRecords) * 1000) / 10 : 0;
     return [
       { label: 'Total Records', value: totalRecords.toLocaleString(), color: 'var(--ink)', note: hasData ? 'From uploaded datasets' : 'No data uploaded' },
-      { label: 'Missing Fields', value: missingFields.toLocaleString(), color: 'var(--amber)', note: hasData ? 'Found in uploaded records' : 'Waiting for upload' },
-      { label: 'Duplicates Found', value: '0', color: 'var(--orange)', note: hasData ? 'No duplicates reported' : 'Waiting for upload' },
-      { label: 'Invalid Coordinates', value: '0', color: 'var(--red)', note: hasData ? 'No coordinate issues reported' : 'Waiting for upload' },
-      { label: 'Validation Score', value: hasData ? `${score}%` : 'N/A', color: 'var(--green)', note: hasData ? 'Calculated from uploaded records' : 'Waiting for upload' },
-      { label: 'Ready for Prediction', value: validRecords.toLocaleString(), color: 'var(--blue)', note: hasData ? 'Validated uploaded records' : 'No records ready' },
+      { label: 'Rejected Records', value: failedRecords.toLocaleString(), color: 'var(--amber)', note: hasData ? 'See row errors in the upload results' : 'Waiting for upload' },
+      { label: 'Duplicates Found', value: duplicates.toLocaleString(), color: 'var(--orange)', note: hasData ? 'Existing records skipped' : 'Waiting for upload' },
+      { label: 'Invalid Coordinates', value: 'N/A', color: 'var(--red)', note: hasData ? 'Invalid values are listed in row errors' : 'Waiting for upload' },
+      { label: 'Import Success', value: hasData ? `${score}%` : 'N/A', color: 'var(--green)', note: hasData ? 'Imported / submitted records' : 'Waiting for upload' },
+      { label: 'Records Imported', value: validRecords.toLocaleString(), color: 'var(--blue)', note: hasData ? 'Saved to the database' : 'No records imported' },
     ];
   }, [files]);
   const completenessRows = useMemo(() => files.map(file => ({
@@ -133,29 +135,16 @@ export default function DataPage() {
 
   async function triggerPipelineRun() {
     if (isPipelineRunning) return;
-
     setIsPipelineRunning(true);
-    setPipelineMessage('Pipeline run started: processing validated datasets...');
-    setActiveTab('pipeline');
-
-    await new Promise(resolve => window.setTimeout(resolve, 1200));
-    setPipelineMessage('Pipeline run completed: datasets processed and ready for model prediction.');
-    setIsPipelineRunning(false);
+    try { await loadDataInfo(); setPipelineMessage('Import history refreshed. Model training and risk analysis run separately.'); setActiveTab('pipeline'); }
+    finally { setIsPipelineRunning(false); }
   }
 
   async function runValidationAndEngineering() {
-    const readyNames = files.filter(f => f.status === 'ready').map(f => f.name);
-    if (readyNames.length === 0 || isEngineering) return;
-
+    if (isEngineering) return;
     setIsEngineering(true);
-    setPipelineMessage('Validating schema and engineering features');
-    setFiles(prev => prev.map(file => readyNames.includes(file.name) ? { ...file, status: 'validating', errorMessage: undefined } : file));
-
-    await new Promise(resolve => window.setTimeout(resolve, 900));
-    setFiles(prev => prev.map(file => readyNames.includes(file.name) ? { ...file, status: 'ready' } : file));
-    setPipelineMessage(`${readyNames.length} file${readyNames.length > 1 ? 's' : ''} validated and feature engineered successfully.`);
-    setActiveTab('pipeline');
-    setIsEngineering(false);
+    try { await loadDataInfo(); setPipelineMessage('Import results refreshed. See each file for validation errors and skipped records.'); }
+    finally { setIsEngineering(false); }
   }
 
   return (
@@ -220,7 +209,7 @@ export default function DataPage() {
             <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
               <button
                 type="button"
-                onClick={() => setUploadDataType('projects')}
+                disabled={uploading} onClick={() => setUploadDataType('projects')}
                 style={{
                   flex: 1, padding: '8px 12px', borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: 'pointer',
                   background: uploadDataType === 'projects' ? 'var(--blue)' : 'var(--bg)',
@@ -228,11 +217,11 @@ export default function DataPage() {
                   border: `1px solid ${uploadDataType === 'projects' ? 'var(--blue)' : 'var(--line)'}`
                 }}
               >
-                Project Records (CSV)
+                Project Records (CSV / JSON)
               </button>
               <button
                 type="button"
-                onClick={() => setUploadDataType('historical')}
+                disabled={uploading} onClick={() => setUploadDataType('historical')}
                 style={{
                   flex: 1, padding: '8px 12px', borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: 'pointer',
                   background: uploadDataType === 'historical' ? 'var(--blue)' : 'var(--bg)',
@@ -245,6 +234,8 @@ export default function DataPage() {
             </div>
             <label
               className="btn"
+              onDragOver={event => event.preventDefault()}
+              onDrop={event => { event.preventDefault(); void addFiles(Array.from(event.dataTransfer.files)); }}
               style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
                 padding: '32px 20px', borderStyle: 'dashed', cursor: 'pointer', width: '100%',
@@ -256,13 +247,15 @@ export default function DataPage() {
               <div>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>Click to upload or drag &amp; drop</div>
                 <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
-                  CSV, XLSX, GeoJSON, JSON, PDF supported
+                  CSV or JSON · up to 4 MB / 5,000 records
                 </div>
               </div>
               <input
                 type="file"
                 multiple
-                accept=".csv,.xlsx,.geojson,.json,.pdf"
+                aria-label="Upload datasets"
+                disabled={uploading}
+                accept={UPLOAD_ACCEPT}
                 style={{ display: 'none' }}
                 onChange={handleFileAdd}
               />
@@ -270,12 +263,12 @@ export default function DataPage() {
 
             {files.length === 0 ? (
               <div style={{ textAlign: 'center', padding: 24, color: 'var(--muted)', fontSize: 13 }}>
-                No files uploaded yet. Upload a CSV or GeoJSON to begin validation.
+                No files uploaded yet. Upload project records as CSV or JSON to begin.
               </div>
             ) : (
               <div style={{ display: 'grid', gap: 8 }}>
                 {files.map(f => (
-                  <div key={f.name} style={{
+                  <div key={f.id} style={{
                     display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center',
                     padding: '10px 14px', background: 'var(--bg)', borderRadius: 6,
                     border: '1px solid var(--line)', gap: 12,
@@ -295,20 +288,23 @@ export default function DataPage() {
                           {f.size}
                           {f.status === 'uploading' && '  Uploading'}
                           {f.status === 'validating' && '  Validating schema'}
-                          {f.status === 'ready' && `  ${f.rows?.toLocaleString()} rows  ${f.errors} errors`}
-                          {f.status === 'error' && '  Validation failed'}
+                          {f.status === 'ready' && '  Import complete'}
+                          {f.status === 'partial' && '  Imported with row errors'}
+                          {f.status === 'error' && '  Import failed'}
                         </div>
+                        {f.result && <UploadSummary result={f.result} />}
+                        {f.errorMessage && <p role="alert" style={{ color: 'var(--red-text)', fontSize: 12 }}>{f.errorMessage}</p>}
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {f.status === 'ready' && <CheckCircle2 size={16} style={{ color: 'var(--green)' }} />}
                       {f.status === 'uploading' && <RefreshCw size={14} style={{ color: 'var(--blue)', animation: 'spin 1s linear infinite' }} />}
                       {f.status === 'validating' && <RefreshCw size={14} style={{ color: 'var(--amber)', animation: 'spin 1s linear infinite' }} />}
-                      {f.status === 'error' && <AlertCircle size={16} style={{ color: 'var(--red)' }} />}
+                      {(f.status === 'error' || f.status === 'partial') && <AlertCircle size={16} style={{ color: 'var(--red)' }} />}
                       <button
-                        onClick={() => removeFile(f.name)}
+                        onClick={() => removeFile(f.id)} disabled={uploading}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: 4 }}
-                        title="Remove file"
+                        title="Dismiss this upload result"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -323,7 +319,7 @@ export default function DataPage() {
                     style={{ marginTop: 8, width: '100%', justifyContent: 'center' }}
                   >
                     {isEngineering ? <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <CheckCircle2 size={13} />}
-                    {isEngineering ? 'Validating & engineering' : `Run Validation & Feature Engineering (${readyFiles} file${readyFiles > 1 ? 's' : ''})`}
+                    {isEngineering ? 'Refreshing import results' : `Refresh import results (${readyFiles} file${readyFiles > 1 ? 's' : ''})`}
                   </button>
                 )}
                 {pipelineMessage && (
@@ -336,12 +332,14 @@ export default function DataPage() {
           </div>
 
           <div className="panel">
-            <div className="paneltitle" style={{ marginBottom: 14 }}>Accepted Formats</div>
+            <div className="paneltitle" style={{ marginBottom: 14 }}>Import guidance</div>
+            <p className="muted" style={{ fontSize: 12 }}>Projects require an ID, name, and state. Other missing text fields use Unknown.</p>
+            <a className="btn" href="/templates/project-records.csv" download>Download project CSV template</a>
             {([
               ['CSV', 'Project records, compensation tables, legal case registers', 'var(--green)'],
-              ['XLSX', 'Master project tracking sheets from state authorities', 'var(--blue)'],
-              ['GeoJSON / JSON', 'Parcel boundaries, project alignment coordinates', 'var(--amber)'],
-              ['PDF', 'Land records, legal notices, rehabilitation plans (NLP extraction)', 'var(--purple)'],
+              ['Excel', 'Save the worksheet as UTF-8 CSV before importing.', 'var(--blue)'],
+              ['JSON', 'An array of project records or an object with a records array', 'var(--amber)'],
+
             ] as [string, string, string][]).map(([fmt, desc, color]) => (
               <div key={fmt} style={{ display: 'flex', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--line)', alignItems: 'flex-start' }}>
                 <div style={{ width: 42, height: 32, display: 'grid', placeItems: 'center', background: color + '20', color, borderRadius: 5, fontSize: 10, fontWeight: 800, flexShrink: 0 }}>

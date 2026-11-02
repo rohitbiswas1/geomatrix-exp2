@@ -1,3 +1,6 @@
+import { authErrorMessage } from './authErrors';
+import { validateUpload } from './uploads';
+
 /**
  * Geomatrix API Client
  * Typed fetch client for all FastAPI backend calls.
@@ -15,10 +18,11 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     cache: 'no-store',
   });
   if (!res.ok) {
-    const body = await res.text();
-    let message = body;
-    try { message = (JSON.parse(body) as { error?: string; detail?: string }).error || (JSON.parse(body) as { detail?: string }).detail || body; } catch { /* preserve non-JSON API errors */ }
-    throw new ApiError(res.status, message);
+    const body = await res.json().catch(() => null);
+    const fallback = res.status === 413 ? 'Files must be 4 MB or smaller. Split larger files before uploading.' :
+      res.status === 401 ? 'Your session has expired. Sign in again, then retry the upload.' :
+      'The request could not be completed. Please try again.';
+    throw new ApiError(res.status, authErrorMessage(body, fallback));
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -153,6 +157,9 @@ export interface ApiAlert {
 }
 
 export interface IngestResult {
+  records_duplicated?: number;
+  records_failed?: number;
+  warnings?: string[];
   missing_fields?: number;
   completeness_pct?: number;
   source: string;
@@ -299,6 +306,8 @@ export async function fetchGeojson(riskLevel?: string): Promise<GeoJsonFeatureCo
 // â”€â”€ Data Ingestion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function uploadFile(file: File, dataType: 'projects' | 'historical'): Promise<IngestResult> {
+  const validation = validateUpload(file);
+  if (validation) throw new ApiError(400, validation);
   const form = new FormData();
   form.append('file', file);
   const res = await fetch(`${BASE}/api/ingest/upload?data_type=${dataType}`, {
@@ -306,12 +315,17 @@ export async function uploadFile(file: File, dataType: 'projects' | 'historical'
     body: form,
   });
   if (!res.ok) {
-    const body = await res.text();
-    let message = body;
-    try { message = (JSON.parse(body) as { error?: string; detail?: string }).error || (JSON.parse(body) as { detail?: string }).detail || body; } catch { /* preserve non-JSON API errors */ }
-    throw new ApiError(res.status, message);
+    const body = await res.json().catch(() => null);
+    const fallback = res.status === 413 ? 'Files must be 4 MB or smaller. Split larger files before uploading.' :
+      res.status === 401 ? 'Your session has expired. Sign in again, then retry the upload.' :
+      'The request could not be completed. Please try again.';
+    throw new ApiError(res.status, authErrorMessage(body, fallback));
   }
-  return res.json() as Promise<IngestResult>;
+  const result: IngestResult = await res.json();
+  if (!result || typeof result.records_saved !== 'number' || !Array.isArray(result.errors)) {
+    throw new ApiError(502, 'The upload service returned an unexpected response. Please retry.');
+  }
+  return result;
 }
 
 export async function fetchIngestionLog(limit = 20): Promise<IngestionLogEntry[]> {
@@ -346,10 +360,11 @@ export async function explainWithGemini(payload: {
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const body = await res.text();
-    let message = body;
-    try { message = (JSON.parse(body) as { error?: string; detail?: string }).error || (JSON.parse(body) as { detail?: string }).detail || body; } catch { /* preserve non-JSON API errors */ }
-    throw new ApiError(res.status, message);
+    const body = await res.json().catch(() => null);
+    const fallback = res.status === 413 ? 'Files must be 4 MB or smaller. Split larger files before uploading.' :
+      res.status === 401 ? 'Your session has expired. Sign in again, then retry the upload.' :
+      'The request could not be completed. Please try again.';
+    throw new ApiError(res.status, authErrorMessage(body, fallback));
   }
   return res.json();
 }

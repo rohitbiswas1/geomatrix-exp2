@@ -1,0 +1,21 @@
+index,project_id,project_name,district,state,latitude,longitude,land_area_acres,estimated_compensation_inr,landowners_count,consent_percentage,acquisition_progress_percentage,legal_disputes_count,environmental_clearance,compensation_status,days_since_start,expected_completion_days,delay_days,risk_level,status
+0,GM-001,Kolkata Infrastructure Corridor,Kolkata,West Bengal,22.5726,88.3639,61.24,200674661,92,78,52,2,Approved,Partially Paid,552,420,132,Low,Delayed
+1,GM-002,Howrah Infrastructure Corridor,Howrah,West Bengal,22.5958,88.2636,63.1,212350682,86,46,18,3,Approved,Pending,356,448,0,High,In Progress
+2,GM-003,North 24 Parganas Infrastructure Corridor,North 24 Parganas,West Bengal,22.722,88.48,50.8,98065692,143,72,96,6,Approved,Paid,230,381,0,Low,Completed
+3,GM-004,South 24 Parganas Infrastructure Corridor,South 24 Parganas,West Bengal,22.1352,88.4016,22.27,45853908,217,57,34,3,Pending,Partially Paid,329,378,0,High,In Progress
+4,GM-005,Hooghly Infrastructure Corridor,Hooghly,West Bengal,22.9012,88.3899,98.01,273865031,178,40,54,6,Approved,Pending,201,369,0,Medium,In Progress
+5,GM-006,Nadia Infrastructure Corridor,Nadia,West Bengal,23.471,88.5565,73.3,189153875,168,50,67,5,Approved,Paid,169,350,0,Medium,In Progress
+6,GM-007,Purba Bardhaman Infrastructure Corridor,Purba Bardhaman,West Bengal,23.2324,87.8615,66.31,227044180,207,77,21,7,Approved,Partially Paid,351,388,0,Medium,In Progress
+7,GM-008,Paschim Bardhaman Infrastructure Corridor,Paschim Bardhaman,West Bengal,23.6739,86.9524,8.53,24779872,118,62,29,3,Pending,Pending,650,303,347,High,Delayed
+8,GM-009,Bankura Infrastructure Corridor,Bankura,West Bengal,23.2324,87.0784,105.65,323971710,29,66,23,4,Approved,Paid,258,431,0,Medium,In Progress
+9,GM-010,Purba Medinipur Infrastructure Corridor,Purba Medinipur,West Bengal,22.2858,87.9189,92.52,228407547,151,48,47,4,Approved,Partially Paid,629,329,300,High,Delayed
+10,GM-011,Paschim Medinipur Infrastructure Corridor,Paschim Medinipur,West Bengal,22.4257,87.3199,25.41,64282650,39,66,57,0,Approved,Pending,185,432,0,Low,In Progress
+11,GM-012,Jalpaiguri Infrastructure Corridor,Jalpaiguri,West Bengal,26.5435,88.7205,9.96,24398733,205,66,75,0,Pending,Paid,533,290,243,Medium,Delayed
+12,GM-013,Darjeeling Infrastructure Corridor,Darjeeling,West Bengal,27.041,88.2663,34.32,114435270,206,94,17,2,Approved,Partially Paid,366,364,2,Low,Delayed
+13,GM-014,Cooch Behar Infrastructure Corridor,Cooch Behar,West Bengal,26.324,89.451,105.05,338084936,166,82,38,3,Approved,Pending,288,278,10,Medium,Delayed
+14,GM-015,Alipurduar Infrastructure Corridor,Alipurduar,West Bengal,26.4919,89.5271,19.26,47411726,69,38,83,4,Approved,Paid,572,467,105,Medium,Delayed
+15,GM-016,Malda Infrastructure Corridor,Malda,West Bengal,25.0108,88.1411,90.7,222574626,27,52,68,1,Pending,Partially Paid,513,437,76,Medium,Delayed
+16,GM-017,Murshidabad Infrastructure Corridor,Murshidabad,West Bengal,24.1759,88.2802,93.57,274985762,183,83,76,1,Approved,Pending,437,261,176,Medium,Delayed
+17,GM-018,Birbhum Infrastructure Corridor,Birbhum,West Bengal,23.8402,87.6186,72.92,253805279,76,60,83,4,Approved,Paid,454,281,173,Medium,Delayed
+18,GM-019,Purulia Infrastructure Corridor,Purulia,West Bengal,23.3321,86.3652,38.11,86378640,200,94,90,6,Approved,Partially Paid,582,364,218,Medium,Delayed
+19,GM-020,Uttar Dinajpur Infrastructure Corridor,Uttar Dinajpur,West Bengal,25.62,88.1256,64.51,147107056,147,88,24,7,Pending,Pending,544,295,249,High,Delayed
