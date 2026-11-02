@@ -39,7 +39,7 @@ const EMPTY_FORM = {
         <label htmlFor={`project-${name}`} style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
           {label}{required && <span style={{ color: 'var(--red)' }}> *</span>}
         </label>
-        <select id={`project-${name}`}
+        <select id={`project-${name}`} aria-label={label}
           className="filter-select" style={{ width: '100%' }}
           value={val as string}
           onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
@@ -52,7 +52,7 @@ const EMPTY_FORM = {
     if (as === 'textarea') return (
       <div>
         <label htmlFor={`project-${name}`} style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>{label}</label>
-        <textarea id={`project-${name}`} rows={2} style={{ width: '100%', padding: '6px 10px', borderRadius: 5, border: '1px solid var(--line)', fontSize: 13 }}
+        <textarea id={`project-${name}`} aria-label={label} rows={2} style={{ width: '100%', padding: '6px 10px', borderRadius: 5, border: '1px solid var(--line)', fontSize: 13 }}
           value={val as string}
           onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
         />
@@ -60,7 +60,7 @@ const EMPTY_FORM = {
     );
     if (type === 'checkbox') return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <input id={`project-${name}`} type="checkbox" checked={val as boolean}
+        <input id={`project-${name}`} aria-label={label} type="checkbox" checked={val as boolean}
           onChange={e => setForm(f => ({ ...f, [name]: e.target.checked }))} />
         <label htmlFor={`project-${name}`} style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{label}</label>
       </div>
@@ -70,7 +70,7 @@ const EMPTY_FORM = {
         <label htmlFor={`project-${name}`} style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
           {label}{required && <span style={{ color: 'var(--red)' }}> *</span>}
         </label>
-        <input id={`project-${name}`} type={type} style={{ width: '100%', padding: '6px 10px', borderRadius: 5, border: '1px solid var(--line)', fontSize: 13 }}
+        <input id={`project-${name}`} aria-label={label} type={type} style={{ width: '100%', padding: '6px 10px', borderRadius: 5, border: '1px solid var(--line)', fontSize: 13 }}
           value={val as string}
           onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
         />
