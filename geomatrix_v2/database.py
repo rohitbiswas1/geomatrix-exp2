@@ -23,6 +23,10 @@ class _DynamicEngine:
 
     def _ensure_engine(self):
         current_url = globals().get("DATABASE_URL", DATABASE_URL)
+        if current_url.startswith("postgres://"):
+            current_url = current_url.replace("postgres://", "postgresql+psycopg://", 1)
+        elif current_url.startswith("postgresql://"):
+            current_url = current_url.replace("postgresql://", "postgresql+psycopg://", 1)
         is_sqlite = current_url.startswith("sqlite")
         engine_options = {"echo": False}
         if is_sqlite:

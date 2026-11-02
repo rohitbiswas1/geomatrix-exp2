@@ -26,7 +26,7 @@ class AuthAttempt(Base):
     __tablename__ = "auth_attempts"
 
     id = Column(String, primary_key=True)
-    key = Column(String(64), nullable=False, index=True)
+    count = Column(Integer, default=0, nullable=False)
     attempted_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 

@@ -606,3 +606,28 @@ longer trusted. Follow the [authentication and real-data upgrade](DEPLOYMENT.md#
 for the required Google client ID, application origin, allowed-account settings,
 and historical-data re-import/retraining steps. Older training records and model
 artifacts are excluded until their original source data is re-imported.
+
+
+### Email/password accounts
+
+The login page supports separate password accounts and verified Google identities.
+The email address is the password account's sign-in ID; registration also takes a
+name and a 12–128 character password. Registration signs the new account in.
+Passwords are salted and derived with PBKDF2-HMAC-SHA256 (600,000 iterations),
+never stored or returned in plaintext. Google and password identities are not
+linked automatically by email. Email verification and password recovery are not
+configured; use a password manager. Workspaces with `AUTH_ALLOWED_EMAILS` require
+verified Google sign-in, since password registration does not verify email ownership.
+
+Accounts, sessions, and atomic attempt counters live in the backend SQL database.
+On Render, configure a persistent PostgreSQL `DATABASE_URL` before enabling password
+accounts. Registration/login refuse the ephemeral SQLite fallback on Render so a
+redeploy cannot silently erase new accounts. `postgres://` and `postgresql://`
+provider URLs are normalized to the installed psycopg3 driver. New tables are
+created by the existing startup migration, with no changes to existing Google
+sessions or project records. Keep the database URL only in Render's server-side
+environment. The frontend proxies credentials through same-origin routes and
+sets a Secure, HttpOnly, SameSite=Lax session cookie.
+
+Validation: `pytest -q` in `geomatrix_v2`, `npm run test:api`, and
+`node --test tests/login-ui.test.mjs` against the isolated login test server in CI.

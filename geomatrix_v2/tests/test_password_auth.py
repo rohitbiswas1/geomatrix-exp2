@@ -18,7 +18,9 @@ def test_registration_login_and_revocation(client):
     assert created.status_code == 201
     data = created.json()
     assert data['user']['email'] == ACCOUNT['email']
-    assert 'password' not in str(data)
+    assert ACCOUNT['password'] not in str(data)
+    assert 'password_hash' not in data['user']
+    assert 'password' not in data['user']
     with SessionLocal() as db:
         account = db.query(PasswordAccount).one()
         assert account.password_hash != ACCOUNT['password']
@@ -63,7 +65,7 @@ def test_registration_validates_input(client, changes):
 
 
 def test_password_flow_respects_allowlist(client, monkeypatch):
-    monkeypatch.setenv('AUTH_ALLOWED_EMAILS', 'authorized@example.com')
+    monkeypatch.setenv('AUTH_ALLOWED_EMAILS', ACCOUNT['email'])
     assert client.post('/api/auth/register', json=ACCOUNT).status_code == 403
     monkeypatch.delenv('AUTH_ALLOWED_EMAILS')
     assert client.post('/api/auth/register', json=ACCOUNT).status_code == 201
@@ -83,3 +85,12 @@ def test_attempt_limit_persists_and_expires(client):
             attempt.attempted_at = datetime.utcnow() - timedelta(minutes=16)
         db.commit()
     assert fresh.post('/api/auth/register', json=ACCOUNT).status_code == 201
+
+
+def test_render_refuses_ephemeral_password_storage(client, monkeypatch):
+    monkeypatch.setenv('RENDER', 'true')
+    monkeypatch.delenv('DATABASE_URL')
+    assert client.post('/api/auth/register', json=ACCOUNT).status_code == 503
+    assert client.post('/api/auth/login', json=ACCOUNT).status_code == 503
+    with SessionLocal() as db:
+        assert db.query(PasswordAccount).count() == 0

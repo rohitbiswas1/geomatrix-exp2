@@ -1,7 +1,8 @@
-"""Verify Google credentials, then issue a persistent, short-lived session."""
+"""Verify Google or password credentials, then issue a revocable session."""
 import os
 import secrets
 import re
+import time
 from uuid import uuid4
 from datetime import datetime, timedelta
 
@@ -58,19 +59,41 @@ def enforce_allowlist(email):
         raise HTTPException(403, "This account is not authorized for GEOMATRIX.")
 
 
+def enforce_password_access():
+    # A password account has not proven email ownership. Never let it satisfy
+    # a verified-email allowlist by simply claiming an authorized address.
+    if os.getenv("AUTH_ALLOWED_EMAILS", "").strip():
+        raise HTTPException(403, "This workspace requires verified Google sign-in.")
+
+
+def require_password_storage():
+    # Render's free filesystem is replaced on deploy. Never accept accounts
+    # into that ephemeral SQLite fallback and later silently lose credentials.
+    if os.getenv("RENDER") and not os.getenv("DATABASE_URL", "").startswith(("postgresql://", "postgresql+psycopg://", "postgres://")):
+        raise HTTPException(503, "Email sign-in is temporarily unavailable. Please use Google sign-in.")
+
+
 def limit_attempts(db, email, request):
-    # Persisted counters survive process restarts and are shared by workers.
+    # Atomic, database-backed fixed-window counters shared by every worker.
     cutoff = datetime.utcnow() - timedelta(minutes=15)
     db.query(AuthAttempt).filter(AuthAttempt.attempted_at < cutoff).delete()
-    keys = [(token_digest("email:" + email), 10),
-            (token_digest("ip:" + (request.client.host if request.client else "unknown")), 100)]
-    for key, limit in keys:
-        if db.query(AuthAttempt).filter(AuthAttempt.key == key).count() >= limit:
-            db.commit()
-            raise HTTPException(429, "Too many attempts. Try again in 15 minutes.", headers={"Retry-After": "900"})
-    for key, _ in keys:
-        db.add(AuthAttempt(id=str(uuid4()), key=key))
     db.commit()
+    bucket = int(time.time()) // 900
+    identities = [("email:" + email, 10),
+                  ("ip:" + (request.client.host if request.client else "unknown"), 100)]
+    for identity, limit in identities:
+        key = token_digest(f"{identity}:{bucket}")
+        if db.get(AuthAttempt, key) is None:
+            db.add(AuthAttempt(id=key, count=0))
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()  # Another worker initialized this bucket first.
+        changed = db.query(AuthAttempt).filter(AuthAttempt.id == key, AuthAttempt.count < limit).update(
+            {AuthAttempt.count: AuthAttempt.count + 1}, synchronize_session=False)
+        db.commit()
+        if changed != 1:
+            raise HTTPException(429, "Too many attempts. Try again in 15 minutes.", headers={"Retry-After": "900"})
 
 
 def issue_session(db, response, subject, email, name):
@@ -86,8 +109,9 @@ def issue_session(db, response, subject, email, name):
 
 @router.post("/register", status_code=201)
 def register(body: RegisterRequest, request: HTTPRequest, response: Response, db: Session = Depends(get_db)):
+    require_password_storage()
     limit_attempts(db, body.email, request)
-    enforce_allowlist(body.email)
+    enforce_password_access()
     account = PasswordAccount(id=str(uuid4()), email=body.email, name=body.name,
                               password_hash=hash_password(body.password))
     db.add(account)
@@ -101,12 +125,13 @@ def register(body: RegisterRequest, request: HTTPRequest, response: Response, db
 
 @router.post("/login")
 def login(body: PasswordLoginRequest, request: HTTPRequest, response: Response, db: Session = Depends(get_db)):
+    require_password_storage()
     limit_attempts(db, body.email, request)
     account = db.query(PasswordAccount).filter(PasswordAccount.email == body.email).first()
     valid = verify_password(body.password, account.password_hash if account else DUMMY_HASH)
     if not account or not valid:
         raise HTTPException(401, "Email or password is incorrect.")
-    enforce_allowlist(account.email)
+    enforce_password_access()
     return issue_session(db, response, "password:" + account.id, account.email, account.name)
 
 
