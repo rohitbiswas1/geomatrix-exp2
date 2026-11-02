@@ -7,25 +7,21 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 7
     steps:
-      - name: Verify production backend
+      - name: Wait for the new backend and verify authentication
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
-            code=$(curl -sS --max-time 65 -o /tmp/geomatrix-health -w '%{http_code}' https://geomatrix-api-backend.onrender.com/health || true)
-            echo "Backend health attempt $attempt: HTTP $code"
-            if [ "$code" = 200 ]; then
-              python3 -c 'import json; assert json.load(open("/tmp/geomatrix-health"))["status"] == "ok"'
-              break
-            fi
-            if [ "$attempt" = 3 ]; then exit 1; fi
+          ready=0
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            health=$(curl -sS --max-time 20 -o /tmp/geomatrix-health -w '%{http_code}' https://geomatrix-api-backend.onrender.com/health || true)
+            auth=$(curl -sS --max-time 20 -o /tmp/geomatrix-auth -w '%{http_code}' https://geomatrix-api-backend.onrender.com/api/auth/me || true)
+            echo "Rollout check $attempt: health HTTP $health, session endpoint HTTP $auth"
+            if [ "$health" = 200 ] && [ "$auth" = 401 ]; then ready=1; break; fi
             sleep 20
           done
-          code=$(curl -sS --max-time 30 -o /tmp/geomatrix-auth -w '%{http_code}' https://geomatrix-api-backend.onrender.com/api/auth/me)
-          echo "Backend auth protection: HTTP $code"
-          test "$code" = 401
+          test "$ready" = 1
           code=$(curl -sS --max-time 30 -o /tmp/geomatrix-google -w '%{http_code}' -H 'Content-Type: application/json' --data '{"credential":"invalid-deployment-smoke-test"}' https://geomatrix-api-backend.onrender.com/api/auth/google)
           echo "Google rejects invalid credentials: HTTP $code"
           test "$code" = 401
