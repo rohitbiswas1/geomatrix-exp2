@@ -29,12 +29,14 @@ class _DynamicEngine:
         elif current_url.startswith("postgresql://"):
             current_url = current_url.replace("postgresql://", "postgresql+psycopg://", 1)
         is_sqlite = current_url.startswith("sqlite")
-        engine_options = {"echo": False}
+        engine_options = {"echo": False, "pool_pre_ping": True}
         if is_sqlite:
             engine_options.update({
                 "connect_args": {"check_same_thread": False},
                 "poolclass": StaticPool,
             })
+        else:
+            engine_options["connect_args"] = {"connect_timeout": 10}
         if self._engine is None or self._current_url != current_url:
             if self._engine is not None:
                 self._engine.dispose()
