@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { backendUrl, checkOrigin, jsonError, SESSION_COOKIE } from '../../../../lib/backend';
 
+export const maxDuration = 90;
+
 const requestSchema = z.object({ credential: z.string().min(1).max(16384) });
 
 export async function POST(request: Request) {
@@ -14,7 +16,7 @@ export async function POST(request: Request) {
     const upstream = await fetch(backendUrl('/api/auth/google'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(parsed.data), cache: 'no-store', redirect: 'error',
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(70000),
     });
     const payload = await upstream.json();
     if (!upstream.ok) return jsonError(payload.detail || 'Google sign-in failed.', upstream.status);
