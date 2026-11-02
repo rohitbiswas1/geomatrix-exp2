@@ -20,6 +20,7 @@ class _DynamicEngine:
 
     def __init__(self):
         self._engine = None
+        self._current_url = None
 
     def _ensure_engine(self):
         current_url = globals().get("DATABASE_URL", DATABASE_URL)
@@ -34,11 +35,11 @@ class _DynamicEngine:
                 "connect_args": {"check_same_thread": False},
                 "poolclass": StaticPool,
             })
-        if self._engine is None:
+        if self._engine is None or self._current_url != current_url:
+            if self._engine is not None:
+                self._engine.dispose()
             self._engine = create_engine(current_url, **engine_options)
-        elif str(self._engine.url) != current_url:
-            self._engine.dispose()
-            self._engine = create_engine(current_url, **engine_options)
+            self._current_url = current_url
         return self._engine
 
     def __getattr__(self, name):

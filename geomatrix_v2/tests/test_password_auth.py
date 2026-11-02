@@ -59,7 +59,10 @@ def test_wrong_password_unknown_account_and_duplicates(client):
     {'password': 'short'}, {'password': 'x'*129}, {'name': '   '}, {'email': 'bad-email'},
 ])
 def test_registration_validates_input(client, changes):
-    assert client.post('/api/auth/register', json={**ACCOUNT, **changes}).status_code == 422
+    response = client.post('/api/auth/register', json={**ACCOUNT, **changes})
+    assert response.status_code == 422
+    assert ACCOUNT['password'] not in response.text
+    assert 'input' not in response.text
     with SessionLocal() as db:
         assert db.query(PasswordAccount).count() == 0
 
