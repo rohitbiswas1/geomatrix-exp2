@@ -101,6 +101,13 @@ def train_model(records: list, algorithm: str = "RandomForest") -> Dict[str, Any
     if min(np.bincount(y_clf)) < 2:
         raise InsufficientDataError("At least two real labeled records per class are required for a stratified holdout.")
 
+    if not (X.nunique(dropna=True) > 1).any():
+        raise InsufficientDataError(
+            "Training rejected: acquisition inputs are missing or constant across all records. "
+            "Official schedule labels alone cannot train the land-acquisition model. "
+            "Upload verified, varying acquisition features measured before the delay outcome."
+        )
+
     real_regression_records = [
         r for r in records
         if r.get(REGRESSION_LABEL) is not None and r.get(REGRESSION_LABEL) != ""

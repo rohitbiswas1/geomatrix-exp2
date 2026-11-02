@@ -372,7 +372,32 @@ def _build_project_row(row, source_name, source_url, warnings):
         warnings.add("Uploaded risk labels are not treated as model predictions. Run risk analysis after importing.")
     lat = _upload_number(row, "latitude", "lat", default=None, minimum=-90, maximum=90)
     lng = _upload_number(row, "longitude", "lon", "lng", default=None, minimum=-180, maximum=180)
+    details = _field_value(row, "source_details")
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except (ValueError, TypeError):
+            raise ValueError("source_details must be a JSON object")
+    if details is not None and not isinstance(details, dict):
+        raise ValueError("source_details must be a JSON object")
+    details = {str(k)[:100]: v for k, v in (details or {}).items()
+               if isinstance(v, (str, int, float, bool, list)) or v is None}
+    observed = []
+    for field, aliases in {
+        "land_required": ("land_required", "land_required_ha", "land_area_ha", "land_area_acres"),
+        "affected_families": ("affected_families", "families_affected"),
+        "current_stage": ("current_stage", "stage", "current_acquisition_stage"),
+    }.items():
+        if _field_value(row, *aliases) is not None:
+            observed.append(field)
+    details["observed_fields"] = observed
+    if len(observed) < 3:
+        warnings.add("Some acquisition inputs were not reported. Supply verified land area, affected families and acquisition stage before prediction.")
+    row_source = _normalize_string(_field_value(row, "source_url")) or source_url
+    if _field_value(row, "source_url") and not row_source.startswith(("https://", "http://")):
+        raise ValueError("source_url must use http or https")
     project = Project(
+        source_details=details,
         id=str(uuid.uuid4()), project_code=code, name=name, state=state,
         district=_normalize_string(_field_value(row, "district", "district_name")) or "Unknown",
         authority=_normalize_string(_field_value(row, "authority", "implementing_agency", "agency")) or "Unknown",
@@ -394,7 +419,7 @@ def _build_project_row(row, source_name, source_url, warnings):
         approval_pending=_coerce_bool(_field_value(row, "approval_pending", "approval_issue")),
         overdue_milestones=_upload_number(row, "overdue_milestones", integer=True, default=0),
         validation_status="validated", data_classification=_classification_for_record(row, source_name),
-        source_name=source_name, source_url=source_url, source_record_id=record_id,
+        source_name=_normalize_string(_field_value(row, "source_name")) or source_name, source_url=row_source, source_record_id=record_id,
     )
     return project
 

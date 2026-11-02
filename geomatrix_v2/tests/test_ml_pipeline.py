@@ -118,7 +118,7 @@ def test_prediction_blocked_without_valid_model():
 
 
 def test_train_model_writes_real_metrics_for_valid_training_data():
-    records = [_real_record(delayed=(i % 2 == 0), actual_delay_days=(30 + i * 4), data_classification="REAL") for i in range(30)]
+    records = [_real_record(land_area_ha=120 + i, delayed=(i % 2 == 0), actual_delay_days=(30 + i * 4), data_classification="REAL") for i in range(30)]
     meta = train_model(records)
     assert meta["n_samples"] == 30
     assert meta["precision"] >= 0.0
@@ -133,7 +133,7 @@ def test_legacy_model_metadata_is_not_loaded():
     import json
     from pathlib import Path
     from ml.train import load_active_model
-    records = [_real_record(delayed=(i % 2 == 0)) for i in range(20)]
+    records = [_real_record(land_area_ha=120 + i, delayed=(i % 2 == 0)) for i in range(20)]
     meta = train_model(records)
     assert load_active_model() is not None
     path = Path(train_module.MODEL_DIR) / f"meta_{meta['run_id']}.json"
@@ -146,3 +146,16 @@ def test_too_few_samples_in_minority_class_rejected():
     records = [_real_record(delayed=(i == 0)) for i in range(10)]
     with pytest.raises(InsufficientDataError, match="per class"):
         train_model(records)
+
+
+def test_training_rejects_only_labels_with_constant_or_missing_features():
+    records = [{"delayed": bool(i % 2), "actual_delay_days": 10 if i % 2 else 0} for i in range(20)]
+    with pytest.raises(InsufficientDataError, match="missing or constant"):
+        train_model(records)
+
+
+def test_missing_observed_values_do_not_become_zero_for_prediction():
+    record = {"land_required": 0, "affected_families": 0, "current_stage": "Unknown", "observed_fields": []}
+    assert set(validate_prediction_inputs(record)) == {"land_required", "affected_families", "current_stage"}
+    record.update(current_stage="Notification", observed_fields=["land_required", "affected_families", "current_stage"])
+    assert validate_prediction_inputs(record) == []

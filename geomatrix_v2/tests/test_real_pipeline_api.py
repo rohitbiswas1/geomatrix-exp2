@@ -202,7 +202,7 @@ N22000463,MUMBAI AHMEDABAD HIGH SPEED RAIL PROJECT,Railways,NHSRCL,Multi-State,2
 """
 
 
-def test_user_mospi_flash_report_csv_ingestion_and_training(tmp_path, monkeypatch):
+def test_mospi_schedule_labels_without_acquisition_features_cannot_train(tmp_path, monkeypatch):
     db_path = tmp_path / "user_csv.db"
     model_dir = tmp_path / "model_artifacts"
     model_dir.mkdir()
@@ -230,22 +230,21 @@ def test_user_mospi_flash_report_csv_ingestion_and_training(tmp_path, monkeypatc
     assert proj_resp.json()["records_saved"] == 10
     assert proj_resp.json()["errors"] == []
 
-    # Train model on historical records
+    # Official labels are retained, but absent feature inputs must not produce a model.
+    summary = client.get("/api/model/training-data").json()
+    assert summary["ready_to_train"] is False
     train_resp = client.post("/api/model/train?algorithm=RandomForest")
-    assert train_resp.status_code == 200
-    assert train_resp.json()["success"] is True
-    assert train_resp.json()["metrics"]["accuracy"] >= 0.0
+    assert train_resp.status_code == 400
+    assert "missing or constant" in train_resp.json()["detail"]
 
-    # Get project and predict
+    # Missing acquisition fields must not become measured zeroes in prediction.
     projects_resp = client.get("/api/projects")
     assert projects_resp.status_code == 200
     project_id = projects_resp.json()[0]["id"]
 
     pred_resp = client.post(f"/api/projects/{project_id}/predict-risk")
-    assert pred_resp.status_code == 200
-    pred = pred_resp.json()["prediction"]
-    assert pred["status"] == "ok"
-    assert 0.0 <= pred["delay_probability"] <= 1.0
+    assert pred_resp.status_code == 422
+    assert "land_required" in str(pred_resp.json())
 
 
 @pytest.fixture(autouse=True)

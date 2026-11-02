@@ -70,6 +70,8 @@ export interface ApiProject {
   predicted_delay_days?: number;
   confidence?: number;
   primary_driver?: string;
+  source_details?: Record<string, string | number | boolean | string[] | null>;
+
   // Provenance
   source_url?: string;
   source_name?: string;

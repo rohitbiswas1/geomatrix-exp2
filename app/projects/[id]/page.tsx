@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import SourceDetails from '../../../components/SourceDetails';
 import { useParams } from 'next/navigation';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
@@ -292,6 +293,8 @@ export default function ProjectRiskIntelligence() {
           <ArrowLeft size={13} /> Back to Projects
         </Link>
       </div>
+
+      <SourceDetails project={p} />
 
       {/* ── Missing Fields Warning ────────────────────────────────────── */}
       {missingFields.length > 0 && (

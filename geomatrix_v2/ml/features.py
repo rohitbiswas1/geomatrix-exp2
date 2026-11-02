@@ -124,7 +124,8 @@ def validate_prediction_inputs(record: Dict[str, Any]) -> list[str]:
     missing = []
     for field in PREDICTION_REQUIRED_FIELDS:
         val = record.get(field)
-        if val is None or val == "" or val == []:
+        observed = record.get("observed_fields")
+        if val is None or val == "" or val == [] or (isinstance(observed, list) and field not in observed):
             missing.append(field)
     return missing
 
