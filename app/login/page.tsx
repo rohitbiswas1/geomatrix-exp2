@@ -32,6 +32,7 @@ export default function Login() {
   const inFlight = useRef(false);
   const active = useRef(true);
   const signInRequest = useRef<AbortController | null>(null);
+  const passwordAuthEnabled = process.env.NEXT_PUBLIC_PASSWORD_AUTH_ENABLED !== 'false';
   const googleSignInUrl = process.env.NEXT_PUBLIC_GOOGLE_SIGN_IN_URL?.trim();
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim();
   const isGoogleAuthReady = Boolean(googleClientId) && process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === 'true';
@@ -202,9 +203,10 @@ export default function Login() {
               <button type="button" aria-pressed={registering} disabled={busy} onClick={() => switchMode('register')}>Create account</button>
             </div>
 
+            {!passwordAuthEnabled && <p className="auth-availability" role="status">Email accounts are being set up. Continue with Google for now.</p>}
             {error && <div className="error-alert" role="alert">{error}</div>}
             <form onSubmit={submitPassword} aria-label={registering ? 'Create an account' : 'Sign in with email'}>
-              <fieldset disabled={busy}>
+              <fieldset disabled={busy || !passwordAuthEnabled}>
                 {registering && <div className="auth-field"><label htmlFor="auth-name">Full name</label><input id="auth-name" name="name" autoComplete="name" required maxLength={100} placeholder="Your full name" value={name} onChange={e => setName(e.target.value)} /></div>}
                 <div className="auth-field"><label htmlFor="auth-email">Email address <span>Your sign-in ID</span></label><input id="auth-email" name="email" type="email" autoComplete="username" inputMode="email" autoCapitalize="none" spellCheck={false} required maxLength={254} placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} /></div>
                 <div className="auth-field"><label htmlFor="auth-password">Password</label><div className="auth-password"><input id="auth-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={registering ? 'new-password' : 'current-password'} minLength={registering ? 12 : 1} maxLength={128} required placeholder={registering ? 'Create a strong password' : 'Enter your password'} aria-describedby={registering ? 'password-help' : undefined} value={password} onChange={e => setPassword(e.target.value)} /><button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>{registering && <p id="password-help" className="auth-hint">Use 12–128 characters. A longer passphrase works well.</p>}</div>

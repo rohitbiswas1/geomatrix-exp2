@@ -631,3 +631,10 @@ sets a Secure, HttpOnly, SameSite=Lax session cookie.
 
 Validation: `pytest -q` in `geomatrix_v2`, `npm run test:api`, and
 `node --test tests/login-ui.test.mjs` against the isolated login test server in CI.
+
+Preview authentication: `MODEL_API_URL` must point to the correct backend. Set
+`NEXT_PUBLIC_GOOGLE_SIGN_IN_URL` to the canonical live login URL when a preview
+origin is not registered with Google. Set `NEXT_PUBLIC_PASSWORD_AUTH_ENABLED=false`
+while the preview backend has no persistent account storage; the interface explains
+that Google should be used and does not accept unusable password submissions.
+Remove this override after connecting PostgreSQL and deploying the account API.

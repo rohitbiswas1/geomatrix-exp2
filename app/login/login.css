@@ -28,3 +28,5 @@
 .auth-preview-note{text-align:center;margin-top:9px}
 @media(max-width:760px){.auth-main{padding:20px 20px 30px}.auth-form-card{padding:26px 24px}.auth-panel{background-attachment:scroll}.auth-panel-header{padding:18px 22px}}
 @media(max-width:360px){.auth-main{padding:12px 14px 25px}.auth-form-card{padding:23px 18px;border-radius:17px}.auth-heading h2{font-size:27px}.auth-kicker{font-size:8px;letter-spacing:1.5px}.auth-field label span{font-size:9px}}
+
+.auth-availability{padding:11px 13px;border-radius:8px;border:1px solid var(--auth-border);background:var(--auth-card);color:var(--auth-muted);font-size:12px;line-height:1.6;margin:0 0 18px}
