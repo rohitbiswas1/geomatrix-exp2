@@ -146,3 +146,16 @@ def test_too_few_samples_in_minority_class_rejected():
     records = [_real_record(delayed=(i == 0)) for i in range(10)]
     with pytest.raises(InsufficientDataError, match="per class"):
         train_model(records)
+
+
+def test_training_rejects_only_labels_with_constant_or_missing_features():
+    records = [{"delayed": bool(i % 2), "actual_delay_days": 10 if i % 2 else 0} for i in range(20)]
+    with pytest.raises(InsufficientDataError, match="missing or constant"):
+        train_model(records)
+
+
+def test_missing_observed_values_do_not_become_zero_for_prediction():
+    record = {"land_required": 0, "affected_families": 0, "current_stage": "Unknown", "observed_fields": []}
+    assert set(validate_prediction_inputs(record)) == {"land_required", "affected_families", "current_stage"}
+    record.update(current_stage="Notification", observed_fields=["land_required", "affected_families", "current_stage"])
+    assert validate_prediction_inputs(record) == []

@@ -18,6 +18,7 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 def _project_to_record(p: Project) -> dict:
     """Convert a Project ORM object to a feature record dict."""
     return {
+        "observed_fields": (p.source_details or {}).get("observed_fields"),
         # Core fields
         "land_area_ha": p.land_required or 0,
         "land_required": p.land_required or 0,
@@ -137,6 +138,13 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
         raise HTTPException(404, "Project not found")
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(p, field, value)
+    if p.source_details is not None:
+        details = dict(p.source_details)
+        observed = set(details.get("observed_fields", []))
+        observed.update(body.model_dump(exclude_none=True))
+        details["observed_fields"] = sorted(observed)
+        details["missing_fields"] = [field for field in details.get("missing_fields", []) if field not in observed]
+        p.source_details = details
     p.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(p)

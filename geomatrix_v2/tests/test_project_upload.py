@@ -133,3 +133,38 @@ def test_unsupported_file_type_size_and_data_type_are_clear(client):
     assert client.post('/api/ingest/upload?data_type=typo', files={'file': ('records.csv', b'x')}).status_code == 422
     with SessionLocal() as db:
         assert db.query(DataIngestionLog).count() == 0
+
+
+def test_official_bundle_import_preserves_source_and_blocks_unknown_prediction(client):
+    path = Path(__file__).resolve().parents[2] / "public/datasets/mospi-may2024-projects.json"
+    records = json.loads(path.read_text())
+    assert len(records) == 30
+    assert len({r["project_code"] for r in records}) == 30
+    result = upload(client, records, "mospi-may2024-projects.json")
+    assert result.status_code == 200
+    assert result.json()["records_saved"] == 30
+    assert result.json()["records_failed"] == 0
+    projects = client.get("/api/projects").json()
+    assert len(projects) == 30
+    item = next(p for p in projects if p["project_code"] == "N04000100")
+    assert item["source_details"]["reported_schedule_slippage_months"] == 8
+    assert item["source_details"]["observed_fields"] == []
+    assert item["source_name"] == "MoSPI Flash Report — May 2024"
+    assert item["source_url"].endswith("#page=159")
+    assert item["risk_score"] is None
+    assert client.get(f"/api/projects/{item['id']}/validate").json()["can_predict"] is False
+    assert client.post(f"/api/projects/{item['id']}/predict-risk").status_code == 422
+    repeat = upload(client, records, "mospi-may2024-projects.json").json()
+    assert repeat["records_saved"] == 0
+    assert repeat["records_duplicated"] == 30
+
+    # An explicit measured zero is different from an absent source value.
+    updated = client.patch(f"/api/projects/{item['id']}", json={
+        "land_required": 12.5, "affected_families": 0, "current_stage": "Notification"
+    })
+    assert updated.status_code == 200
+    detail = updated.json()
+    assert "affected_families" in detail["source_details"]["observed_fields"]
+    assert "affected_families" not in detail["source_details"]["missing_fields"]
+    assert detail["source_details"]["original_cost_cr"] == 499
+    assert client.get(f"/api/projects/{item['id']}/validate").json()["can_predict"] is True

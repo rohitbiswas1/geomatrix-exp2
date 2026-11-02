@@ -37,11 +37,16 @@ def get_training_data(db: Session = Depends(get_db)):
     excluded = db.query(HistoricalDelayRecord).count() - total
     delayed = eligible_records(db).filter_by(delayed=True).count()
     on_time = total - delayed
+    from ml.features import build_feature_dataframe
+    rows = eligible_records(db).all()
+    has_variation = bool(rows) and bool((build_feature_dataframe([r.__dict__ for r in rows]).nunique(dropna=True) > 1).any())
     return {
+        "varying_features_available": has_variation,
+        "feature_message": "Observed inputs vary." if has_variation else "Acquisition inputs are missing or constant. Supply verified features; schedule labels alone are insufficient.",
         "total_records": total,
         "delayed_count": delayed,
         "on_time_count": on_time,
-        "ready_to_train": total >= MIN_SAMPLES and min(delayed, on_time) >= 2,
+        "ready_to_train": total >= MIN_SAMPLES and min(delayed, on_time) >= 2 and has_variation,
         "excluded_records": excluded,
         "message": (
             f"{total} eligible real labeled records ({delayed} delayed, {on_time} on-time); {excluded} legacy or non-real records excluded."

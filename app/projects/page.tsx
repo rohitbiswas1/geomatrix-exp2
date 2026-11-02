@@ -2,8 +2,8 @@
 
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { Plus, Upload, Map as MapIcon, Search, ArrowUpDown, Filter, TrendingUp, TrendingDown, Minus, X, CheckCircle2, AlertCircle, RefreshCw, Trash2 } from 'lucide-react';
-import { fetchProjects, createProject, uploadFile, deleteProject, ApiProject, ApiError, type IngestResult } from '../../lib/apiClient';
+import { Plus, Pencil, Upload, Map as MapIcon, Search, ArrowUpDown, Filter, TrendingUp, TrendingDown, Minus, X, CheckCircle2, AlertCircle, RefreshCw, Trash2 } from 'lucide-react';
+import { fetchProjects, createProject, updateProject, uploadFile, deleteProject, ApiProject, ApiError, type IngestResult } from '../../lib/apiClient';
 import { riskLevel } from '../../lib/data';
 import ExportDropdown, { ExportFormat } from '../../components/ExportDropdown';
 import { exportToCSV, exportToExcel, exportToPDF } from '../../lib/exportUtils';
@@ -28,6 +28,57 @@ const EMPTY_FORM = {
   crz_status: '', doc_completeness_pct: '', approval_pending: false, overdue_milestones: '',
 };
 
+  function Field({ form, setForm, label, name, required, type = 'text', as, options }: {
+    form: typeof EMPTY_FORM; setForm: React.Dispatch<React.SetStateAction<typeof EMPTY_FORM>>;
+    label: string; name: string; required?: boolean; type?: string;
+    as?: 'select' | 'textarea'; options?: string[];
+  }) {
+    const val = form[name as keyof typeof form] as string | boolean;
+    if (as === 'select') return (
+      <div>
+        <label htmlFor={`project-${name}`} style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
+          {label}{required && <span style={{ color: 'var(--red)' }}> *</span>}
+        </label>
+        <select id={`project-${name}`}
+          className="filter-select" style={{ width: '100%' }}
+          value={val as string}
+          onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
+        >
+          <option value="">— Select —</option>
+          {options?.map(o => <option key={o}>{o}</option>)}
+        </select>
+      </div>
+    );
+    if (as === 'textarea') return (
+      <div>
+        <label htmlFor={`project-${name}`} style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>{label}</label>
+        <textarea id={`project-${name}`} rows={2} style={{ width: '100%', padding: '6px 10px', borderRadius: 5, border: '1px solid var(--line)', fontSize: 13 }}
+          value={val as string}
+          onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
+        />
+      </div>
+    );
+    if (type === 'checkbox') return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input id={`project-${name}`} type="checkbox" checked={val as boolean}
+          onChange={e => setForm(f => ({ ...f, [name]: e.target.checked }))} />
+        <label htmlFor={`project-${name}`} style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{label}</label>
+      </div>
+    );
+    return (
+      <div>
+        <label htmlFor={`project-${name}`} style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
+          {label}{required && <span style={{ color: 'var(--red)' }}> *</span>}
+        </label>
+        <input id={`project-${name}`} type={type} style={{ width: '100%', padding: '6px 10px', borderRadius: 5, border: '1px solid var(--line)', fontSize: 13 }}
+          value={val as string}
+          onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
+        />
+      </div>
+    );
+  }
+
+
 export default function Projects() {
   const [projects, setProjects] = useState<ApiProject[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,6 +93,7 @@ export default function Projects() {
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   // Add Project modal state
+  const [editingProject, setEditingProject] = useState<ApiProject | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [form, setForm] = useState<typeof EMPTY_FORM>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -94,6 +146,33 @@ export default function Projects() {
     }
   }
 
+  async function importOfficialRecords() {
+    if (csvInFlight.current) return;
+    csvInFlight.current = true; setCsvUploading(true); setCsvError(''); setCsvResult(null);
+    try {
+      const response = await fetch('/datasets/mospi-may2024-projects.json');
+      if (!response.ok) throw new Error('Unable to load the official records. Please retry.');
+      const file = new File([await response.blob()], 'mospi-may2024-projects.json', { type: 'application/json' });
+      const result = await uploadFile(file, 'projects');
+      setCsvResult(result);
+      if (result.records_saved > 0) { resetFilters(); await load(); }
+    } catch (error) {
+      setCsvError(error instanceof Error ? error.message : 'Official import failed. Please retry.');
+    } finally { csvInFlight.current = false; setCsvUploading(false); }
+  }
+
+  function editProject(project: ApiProject) {
+    const next = { ...EMPTY_FORM };
+    const missing = project.source_details?.missing_fields;
+    for (const key of Object.keys(next) as (keyof typeof EMPTY_FORM)[]) {
+      const value = project[key as keyof ApiProject];
+      if (Array.isArray(missing) && missing.includes(key)) continue;
+      if (key === 'approval_pending') next.approval_pending = value === true;
+      else (next as Record<string, string | boolean>)[key] = value == null ? '' : String(value);
+    }
+    setForm(next); setEditingProject(project); setFormError(''); setShowAddModal(true);
+  }
+
   async function handleSaveProject() {
     setFormError('');
     const required = ['project_code', 'name', 'state', 'district', 'authority', 'project_type'];
@@ -102,7 +181,7 @@ export default function Projects() {
 
     setSaving(true);
     try {
-      await createProject({
+      const payload = {
         project_code: form.project_code,
         name: form.name,
         state: form.state,
@@ -127,10 +206,20 @@ export default function Projects() {
         doc_completeness_pct: form.doc_completeness_pct ? parseFloat(form.doc_completeness_pct) : 50,
         approval_pending: form.approval_pending,
         overdue_milestones: form.overdue_milestones ? parseInt(form.overdue_milestones) : 0,
-      });
+      };
+      if (editingProject) {
+        const changes = Object.fromEntries(Object.entries(payload).filter(([key, value]) =>
+          key !== 'project_code' && value !== undefined && form[key as keyof typeof form] !== '' &&
+          (value !== editingProject[key as keyof ApiProject] || (key !== 'approval_pending' && Array.isArray(editingProject.source_details?.missing_fields) && editingProject.source_details.missing_fields.includes(key)))
+        ));
+        await updateProject(editingProject.id, changes);
+      } else {
+        await createProject(payload);
+      }
       setShowAddModal(false);
       setForm(EMPTY_FORM);
-      showToast(`Project ${form.project_code} created successfully`);
+      showToast(editingProject ? 'Project details saved' : 'Project created successfully');
+      setEditingProject(null);
       await load();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
@@ -227,55 +316,6 @@ export default function Projects() {
       ? <span style={{ color: 'var(--blue)', fontWeight: 700 }}>{sortDir === 'asc' ? ' ↑' : ' ↓'}</span>
       : <ArrowUpDown size={10} style={{ marginLeft: 4, opacity: 0.4 }} />;
 
-  function Field({ label, name, required, type = 'text', as, options }: {
-    label: string; name: string; required?: boolean; type?: string;
-    as?: 'select' | 'textarea'; options?: string[];
-  }) {
-    const val = form[name as keyof typeof form] as string | boolean;
-    if (as === 'select') return (
-      <div>
-        <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
-          {label}{required && <span style={{ color: 'var(--red)' }}> *</span>}
-        </label>
-        <select
-          className="filter-select" style={{ width: '100%' }}
-          value={val as string}
-          onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
-        >
-          <option value="">— Select —</option>
-          {options?.map(o => <option key={o}>{o}</option>)}
-        </select>
-      </div>
-    );
-    if (as === 'textarea') return (
-      <div>
-        <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>{label}</label>
-        <textarea rows={2} style={{ width: '100%', padding: '6px 10px', borderRadius: 5, border: '1px solid var(--line)', fontSize: 13 }}
-          value={val as string}
-          onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
-        />
-      </div>
-    );
-    if (type === 'checkbox') return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <input type="checkbox" checked={val as boolean}
-          onChange={e => setForm(f => ({ ...f, [name]: e.target.checked }))} />
-        <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{label}</label>
-      </div>
-    );
-    return (
-      <div>
-        <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
-          {label}{required && <span style={{ color: 'var(--red)' }}> *</span>}
-        </label>
-        <input type={type} style={{ width: '100%', padding: '6px 10px', borderRadius: 5, border: '1px solid var(--line)', fontSize: 13 }}
-          value={val as string}
-          onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="page">
       <div className="head">
@@ -291,11 +331,20 @@ export default function Projects() {
           </label>
           <a className="btn" href="/templates/project-records.csv" download>CSV template</a>
           <ExportDropdown label="Export" onExport={handleExport} />
-          <button className="btn" onClick={() => setShowAddModal(true)}><Plus size={13} /> Add Project</button>
+          <button className="btn" onClick={() => { setEditingProject(null); setForm(EMPTY_FORM); setShowAddModal(true); }}><Plus size={13} /> Add Project</button>
           <Link className="btn primary" href="/map"><MapIcon size={13} /> View GIS Map</Link>
         </div>
       </div>
 
+      <section className="panel" aria-label="Official government project records" style={{ marginBottom: 16 }}>
+        <strong>Official government project records</strong>
+        <p className="muted" style={{ margin: '8px 0', lineHeight: 1.7 }}>Import 30 projects from MoSPI’s May 2024 Flash Report, with agencies, costs, commissioning schedules, reported slippage and source pages. This is a historical snapshot. Unreported land and family details remain unknown; reported slippage is separate from AI predictions.</p>
+        <div className="actions" style={{ flexWrap: 'wrap' }}>
+          <button className="btn" disabled={csvUploading} onClick={importOfficialRecords}>{csvUploading ? 'Importing…' : 'Import 30 official projects'}</button>
+          <a className="btn" href="/datasets/mospi-may2024-projects.json" download>Download official records</a>
+          <a className="link" href="https://www.mospi.gov.in/sites/default/files/publication_reports/FlashReport_May_2024.pdf" target="_blank" rel="noreferrer">Read MoSPI source report</a>
+        </div>
+      </section>
       {csvResult && <div className="panel" style={{ marginBottom: 16 }}><UploadSummary result={csvResult} /></div>}
       <p className="muted" style={{ marginBottom: 14, fontSize: 12 }}>CSV or JSON · up to 4 MB / 5,000 records. Required: project_code (or project_id), name (or project_name), state.</p>
       {csvError && (
@@ -474,6 +523,7 @@ export default function Projects() {
                             <span style={{ fontSize: 11, fontWeight: 600, color: p.status === 'Intervention Required' ? 'var(--red-text)' : p.status === 'At Risk' ? 'var(--orange-text)' : p.status === 'Watch' ? 'var(--amber-text)' : 'var(--green-text)' }}>
                               {p.status ?? '—'}
                             </span>
+                            <button className="btn" onClick={() => editProject(p)} aria-label={`Edit ${p.name}`} title="Edit project details"><Pencil size={11} /></button>
                             <button
                               className="btn"
                               onClick={() => handleDeleteProject(p.id, p.name)}
@@ -502,7 +552,7 @@ export default function Projects() {
         <div className="modalbg" onClick={() => { setShowAddModal(false); setForm(EMPTY_FORM); setFormError(''); }}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 680, maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ margin: 0, fontWeight: 800 }}>Add New Project</h3>
+              <h3 style={{ margin: 0, fontWeight: 800 }}>{editingProject ? 'Edit Project Details' : 'Add New Project'}</h3>
               <button onClick={() => { setShowAddModal(false); setForm(EMPTY_FORM); setFormError(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)' }}><X size={18} /></button>
             </div>
 
@@ -513,47 +563,47 @@ export default function Projects() {
             )}
 
             <div className="form" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <Field label="Project Code" name="project_code" required />
-              <Field label="Project Name" name="name" required />
-              <Field label="State" name="state" required />
-              <Field label="District" name="district" required />
-              <Field label="Authority" name="authority" required />
-              <Field label="Project Type" name="project_type" required as="select"
-                options={['Road / Highway', 'Railway', 'Power / Energy', 'Water / Irrigation', 'Industrial', 'Urban Development', 'Defence', 'Other']} />
-              <Field label="Description" name="description" as="textarea" />
-              <Field label="Current Acquisition Stage" name="current_stage" as="select" options={ACQUISITION_STAGES} />
+              <Field form={form} setForm={setForm} label="Project Code" name="project_code" required />
+              <Field form={form} setForm={setForm} label="Project Name" name="name" required />
+              <Field form={form} setForm={setForm} label="State" name="state" required />
+              <Field form={form} setForm={setForm} label="District" name="district" required />
+              <Field form={form} setForm={setForm} label="Authority" name="authority" required />
+              <Field form={form} setForm={setForm} label="Project Type" name="project_type" required as="select"
+                options={['Civil Aviation', 'Atomic Energy', 'Road / Highway', 'Railway', 'Power / Energy', 'Water / Irrigation', 'Industrial', 'Urban Development', 'Defence', 'Other']} />
+              <Field form={form} setForm={setForm} label="Description" name="description" as="textarea" />
+              <Field form={form} setForm={setForm} label="Current Acquisition Stage" name="current_stage" as="select" options={ACQUISITION_STAGES} />
 
               <div style={{ gridColumn: '1 / -1', borderTop: '1px solid var(--line)', paddingTop: 12, marginTop: 4 }}>
                 <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Land & Families</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-                  <Field label="Land Required (ha)" name="land_required" type="number" />
-                  <Field label="Land Acquired (ha)" name="land_acquired" type="number" />
-                  <Field label="Affected Families" name="affected_families" type="number" />
+                  <Field form={form} setForm={setForm} label="Land Required (ha)" name="land_required" type="number" />
+                  <Field form={form} setForm={setForm} label="Land Acquired (ha)" name="land_acquired" type="number" />
+                  <Field form={form} setForm={setForm} label="Affected Families" name="affected_families" type="number" />
                 </div>
               </div>
 
               <div style={{ gridColumn: '1 / -1', borderTop: '1px solid var(--line)', paddingTop: 12, marginTop: 4 }}>
                 <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Risk Inputs</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-                  <Field label="Compensation Status" name="compensation_status" as="select" options={['Pending', 'In Progress', 'Settled', 'Disputed']} />
-                  <Field label="Objection Count" name="objection_count" type="number" />
-                  <Field label="Legal Case Count" name="legal_case_count" type="number" />
-                  <Field label="R&R Status" name="rr_status" as="select" options={['Pending', 'In Progress', 'Completed']} />
-                  <Field label="Env Clearance" name="env_clearance_status" as="select" options={['Pending', 'Granted', 'NA']} />
-                  <Field label="Forest Clearance" name="forest_clearance_status" as="select" options={['Pending', 'Granted', 'NA']} />
-                  <Field label="CRZ Status" name="crz_status" as="select" options={['NA', 'Pending', 'Granted']} />
-                  <Field label="Doc Completeness (%)" name="doc_completeness_pct" type="number" />
-                  <Field label="Overdue Milestones" name="overdue_milestones" type="number" />
-                  <Field label="Approval Pending" name="approval_pending" type="checkbox" />
+                  <Field form={form} setForm={setForm} label="Compensation Status" name="compensation_status" as="select" options={['Pending', 'In Progress', 'Settled', 'Disputed']} />
+                  <Field form={form} setForm={setForm} label="Objection Count" name="objection_count" type="number" />
+                  <Field form={form} setForm={setForm} label="Legal Case Count" name="legal_case_count" type="number" />
+                  <Field form={form} setForm={setForm} label="R&R Status" name="rr_status" as="select" options={['Pending', 'In Progress', 'Completed']} />
+                  <Field form={form} setForm={setForm} label="Env Clearance" name="env_clearance_status" as="select" options={['Pending', 'Granted', 'NA']} />
+                  <Field form={form} setForm={setForm} label="Forest Clearance" name="forest_clearance_status" as="select" options={['Pending', 'Granted', 'NA']} />
+                  <Field form={form} setForm={setForm} label="CRZ Status" name="crz_status" as="select" options={['NA', 'Pending', 'Granted']} />
+                  <Field form={form} setForm={setForm} label="Doc Completeness (%)" name="doc_completeness_pct" type="number" />
+                  <Field form={form} setForm={setForm} label="Overdue Milestones" name="overdue_milestones" type="number" />
+                  <Field form={form} setForm={setForm} label="Approval Pending" name="approval_pending" type="checkbox" />
                 </div>
               </div>
 
               <div style={{ gridColumn: '1 / -1', borderTop: '1px solid var(--line)', paddingTop: 12, marginTop: 4 }}>
                 <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Location</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-                  <Field label="Latitude" name="latitude" type="number" />
-                  <Field label="Longitude" name="longitude" type="number" />
-                  <Field label="Status" name="status" as="select" options={['Active', 'At Risk', 'Watch', 'Intervention Required', 'Completed', 'On Hold']} />
+                  <Field form={form} setForm={setForm} label="Latitude" name="latitude" type="number" />
+                  <Field form={form} setForm={setForm} label="Longitude" name="longitude" type="number" />
+                  <Field form={form} setForm={setForm} label="Status" name="status" as="select" options={['Active', 'At Risk', 'Watch', 'Intervention Required', 'Completed', 'On Hold']} />
                 </div>
               </div>
             </div>

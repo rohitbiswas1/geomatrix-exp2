@@ -114,3 +114,38 @@ test('data drop zone actually uploads dropped files',async()=>{
     assert.equal(state.uploads,1);
   } finally { await context.close(); }
 });
+
+
+test('official source bundle imports through the same upload flow', async()=>{
+  const {context,page,state}=await setup('/projects',(route,state)=>{
+    state.projects=[project];
+    return route.fulfill({json:{...success,records_saved:30,records_fetched:30}});
+  });
+  try {
+    await page.getByRole('button',{name:'Import 30 official projects',exact:true}).click();
+    await visible(page.getByText('30 of 30 records imported.',{exact:true}));
+    assert.equal(state.uploads,1);
+    await visible(page.getByRole('link',{name:'Uploaded project',exact:true}));
+  } finally { await context.close(); }
+});
+
+test('project edit form keeps focus while typing and persists changed details', async()=>{
+  const {context,page,state}=await setup();
+  let changes;
+  try {
+    await page.getByLabel('Upload project records').setInputFiles(csv);
+    await visible(page.getByRole('link',{name:'Uploaded project',exact:true}));
+    await page.route('**/api/projects/p1',async route=>{
+      changes=route.request().postDataJSON();
+      state.projects=[{...project,...changes}];
+      return route.fulfill({json:state.projects[0]});
+    });
+    await page.getByRole('button',{name:'Edit Uploaded project',exact:true}).click();
+    await page.getByLabel('Project Name',{exact:true}).fill('');
+    await page.getByLabel('Project Name',{exact:true}).pressSequentially('Revised project name');
+    assert.equal(await page.getByLabel('Project Name',{exact:true}).inputValue(),'Revised project name');
+    await page.getByRole('button',{name:'Save Project',exact:true}).click();
+    await visible(page.getByRole('link',{name:'Revised project name',exact:true}));
+    assert.equal(changes.name,'Revised project name');
+  } finally { await context.close(); }
+});

@@ -61,6 +61,8 @@ class Project(Base):
     validation_status = Column(String, default="pending")
     data_classification = Column(String, default="REAL")
 
+    source_details = Column(JSON)  # Reported source attributes and observed input fields
+
     # provenance
     source_name      = Column(String)
     source_url       = Column(String)

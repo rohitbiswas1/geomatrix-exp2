@@ -44,6 +44,8 @@ class ProjectOut(BaseModel):
     confidence: Optional[float]
     primary_driver: Optional[str]
 
+    source_details: Optional[Dict[str, Any]] = None
+
     # Provenance
     source_url: Optional[str]
     source_record_id: Optional[str]
