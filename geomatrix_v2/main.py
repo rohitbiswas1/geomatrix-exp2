@@ -1,5 +1,8 @@
 import os
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
@@ -22,6 +25,16 @@ def _cors_origins() -> list[str]:
 
 
 app = FastAPI(title="Geomatrix v2")
+@app.exception_handler(RequestValidationError)
+async def safe_validation_error(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith("/api/auth/"):
+        # Pydantic's default validation payload contains the submitted input.
+        # Credentials must never be echoed, even on malformed requests.
+        return JSONResponse(status_code=422, content={"detail": "Check your account details and try again."},
+                            headers={"Cache-Control": "no-store"})
+    return await request_validation_exception_handler(request, exc)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),

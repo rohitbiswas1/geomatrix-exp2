@@ -153,3 +153,63 @@ test('login sets a secure HttpOnly cookie and never exposes the session token', 
     });
   } finally { delete process.env.NODE_ENV; }
 });
+
+test('password registration and login set HttpOnly sessions without returning credentials', async () => {
+  const { passwordAuth } = await import('../lib/passwordAuth.ts');
+  for (const action of ['login', 'register']) {
+    jar.clear();
+    mock.method(globalThis, 'fetch', async (url, init) => {
+      assert.equal(url, `https://api.example.com/api/auth/${action}`);
+      const body = JSON.parse(init.body);
+      assert.equal(body.email, 'officer@example.com');
+      assert.equal(body.password, 'A long test passphrase');
+      assert.equal(body.confirmPassword, undefined);
+      return Response.json({ token: 'private-token', user: { name: 'Officer' }, expires_in: 28800 }, { status: action === 'register' ? 201 : 200 });
+    });
+    const response = await passwordAuth(request(`/api/auth/${action}`, { method: 'POST',
+      body: JSON.stringify({ email: 'officer@example.com', password: 'A long test passphrase', name: 'Officer', confirmPassword: 'never forward this' }) }), action);
+    assert.deepEqual(await response.json(), { name: 'Officer' });
+    assert.equal(jar.get(SESSION_COOKIE), 'private-token');
+    assert.equal(cookieOptions.get(SESSION_COOKIE).httpOnly, true);
+    assert.equal(cookieOptions.get(SESSION_COOKIE).sameSite, 'lax');
+    mock.restoreAll();
+  }
+});
+
+test('password auth rejects invalid input and cross-origin requests before upstream', async () => {
+  const { passwordAuth } = await import('../lib/passwordAuth.ts');
+  const fetchMock = mock.method(globalThis, 'fetch', () => { throw Error('must not fetch'); });
+  assert.equal((await passwordAuth(request('/api/auth/register', { method: 'POST', body: JSON.stringify({email:'a@b.com', password:'short', name:'A'}) }), 'register')).status, 400);
+  assert.equal((await passwordAuth(request('/api/auth/login', { method: 'POST', body: 'invalid' }), 'login')).status, 400);
+  assert.equal((await passwordAuth(request('/api/auth/login', { method: 'POST', body: '{}', headers: { Origin: 'https://attacker.example' } }), 'login')).status, 403);
+  assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test('password auth preserves errors and never saves a cookie on failure', async () => {
+  const { passwordAuth } = await import('../lib/passwordAuth.ts');
+  mock.method(globalThis, 'fetch', async () => Response.json({ detail: 'Too many attempts.' }, { status: 429 }));
+  const response = await passwordAuth(request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'a@b.com', password: 'wrong' }) }), 'login');
+  assert.equal(response.status, 429);
+  assert.equal((await response.json()).error, 'Too many attempts.');
+  assert.equal(jar.size, 0);
+});
+
+
+test('structured authentication errors stay readable and never echo validation inputs', async () => {
+  const { authErrorMessage } = await import('../lib/authErrors.ts');
+  assert.equal(authErrorMessage({ error: { message: 'Please reopen this preview.' } }, 'Try again.'), 'Please reopen this preview.');
+  assert.equal(authErrorMessage({ error: { code: 'AUTHENTICATION_REQUIRED', message: 'object' } }, 'Try again.'),
+    'This preview needs renewed access. Reopen the preview link or use the live site.');
+  for (const payload of [{ error: {} }, { detail: [{ msg: 'Too short', input: 'private-password' }] }, null, { error: '[object Object]' }]) {
+    assert.equal(authErrorMessage(payload, 'Check your details.'), 'Check your details.');
+  }
+});
+
+test('unavailable registration endpoint explains the deployment problem', async () => {
+  const { passwordAuth } = await import('../lib/passwordAuth.ts');
+  mock.method(globalThis, 'fetch', async () => Response.json({ detail: 'Not Found' }, { status: 404 }));
+  const response = await passwordAuth(request('/api/auth/register', { method: 'POST', body: JSON.stringify({ email: 'a@b.com', password: 'A long test passphrase', name: 'Test' }) }), 'register');
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'Account creation is not active on this deployment yet. Please use Google sign-in.');
+  assert.equal(jar.size, 0);
+});

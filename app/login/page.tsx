@@ -1,15 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { ShieldCheck, Map, Sun, Moon, Laptop, Loader2 } from 'lucide-react';
+import { ShieldCheck, Map, Sun, Moon, Laptop, Loader2, ArrowRight, Eye, EyeOff, Layers, ChartNoAxesCombined, Radar } from 'lucide-react';
+import './login.css';
 
+import { authErrorMessage } from '../../lib/authErrors';
 import { loadGoogleIdentity } from '../../lib/googleIdentity';
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
 export default function Login() {
   const router = useRouter();
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [showPassword, setShowPassword] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
@@ -24,6 +32,8 @@ export default function Login() {
   const inFlight = useRef(false);
   const active = useRef(true);
   const signInRequest = useRef<AbortController | null>(null);
+  const passwordAuthEnabled = process.env.NEXT_PUBLIC_PASSWORD_AUTH_ENABLED !== 'false';
+  const googleSignInUrl = process.env.NEXT_PUBLIC_GOOGLE_SIGN_IN_URL?.trim();
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim();
   const isGoogleAuthReady = Boolean(googleClientId) && process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === 'true';
 
@@ -66,7 +76,7 @@ export default function Login() {
     return () => media.removeEventListener('change', update);
   }, [themeMode]);
 
-  const handleCredential = useCallback(async ({ credential }: { credential: string }) => {
+  const authenticate = useCallback(async (endpoint: string, body: Record<string, string>) => {
     if (!active.current || inFlight.current) return;
     inFlight.current = true;
     setIsLoading(true);
@@ -78,12 +88,13 @@ export default function Login() {
     const slowTimer = window.setTimeout(() => { if (active.current) setSlowSignIn(true); }, 7000);
     const timeout = window.setTimeout(() => controller.abort(), 75000);
     try {
-      const response = await fetch('/api/auth/google', {
+      const response = await fetch(endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential }), signal: controller.signal,
+        body: JSON.stringify(body), signal: controller.signal,
       });
       const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(result?.error || 'Sign-in could not be completed. Please try again.');
+      if (!response.ok) throw new Error(authErrorMessage(result, 'Sign-in could not be completed. Please try again.'));
+      if (!result || typeof result.email !== 'string') throw new Error('The sign-in service returned an unexpected response. Please try again.');
       if (!active.current) return;
       setSessionState('redirecting');
       router.replace('/dashboard');
@@ -102,6 +113,20 @@ export default function Login() {
       signInRequest.current = null;
     }
   }, [router]);
+
+  const handleCredential = useCallback(({ credential }: { credential: string }) => {
+    void authenticate('/api/auth/google', { credential });
+  }, [authenticate]);
+
+  function submitPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (mode === 'register' && password !== confirmation) { setError('Passwords do not match.'); return; }
+    void authenticate(`/api/auth/${mode}`, { email: email.trim(), password, ...(mode === 'register' ? { name: name.trim() } : {}) });
+  }
+
+  function switchMode(next: 'login' | 'register') {
+    setMode(next); setPassword(''); setConfirmation(''); setShowPassword(false); setError(''); setNotice('');
+  }
 
   useEffect(() => {
     if (!isGoogleAuthReady || sessionState !== 'signed-out') return;
@@ -140,700 +165,71 @@ export default function Login() {
     return () => { disposed = true; observer?.disconnect(); };
   }, [isGoogleAuthReady, sessionState, googleClientId, effectiveTheme, handleCredential, retry]);
 
+  const busy = isLoading || sessionState !== 'signed-out';
+  const registering = mode === 'register';
   return (
     <div className={`login-page-wrapper theme-${effectiveTheme}`} data-theme={effectiveTheme}>
-      <style>{`
-        .login-page-wrapper {
-          --bg-overlay-dark: radial-gradient(circle at 50% 30%, rgba(15, 23, 42, 0.72) 0%, rgba(5, 18, 38, 0.92) 80%);
-          --bg-overlay-light: radial-gradient(circle at 50% 30%, rgba(15, 23, 42, 0.55) 0%, rgba(5, 18, 38, 0.85) 80%);
-          
-          --card-bg-dark: rgba(11, 27, 49, 0.78);
-          --card-bg-light: rgba(255, 255, 255, 0.88);
-          
-          --card-border-dark: rgba(255, 255, 255, 0.14);
-          --card-border-light: rgba(255, 255, 255, 0.7);
-
-          --card-shadow-dark: 0 24px 60px -12px rgba(0, 0, 0, 0.65), 0 0 35px rgba(37, 99, 235, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-          --card-shadow-light: 0 24px 60px -12px rgba(5, 25, 48, 0.3), 0 0 35px rgba(37, 99, 235, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-
-          --text-main-dark: #f8fafc;
-          --text-main-light: #0f172a;
-
-          --text-muted-dark: #94a3b8;
-          --text-muted-light: #475569;
-
-          --input-bg-dark: rgba(15, 23, 42, 0.65);
-          --input-bg-light: rgba(248, 250, 252, 0.9);
-
-          --input-border-dark: rgba(255, 255, 255, 0.15);
-          --input-border-light: rgba(203, 213, 225, 0.9);
-
-          --chip-bg-dark: rgba(30, 41, 59, 0.7);
-          --chip-bg-light: rgba(241, 245, 249, 0.9);
-
-          --chip-border-dark: rgba(255, 255, 255, 0.12);
-          --chip-border-light: rgba(203, 213, 225, 0.8);
-          
-          position: relative;
-          min-height: 100vh;
-          width: 100%;
-          display: flex;
-          flex-direction: column;
-          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-          color: var(--text-main);
-          box-sizing: border-box;
-          overflow-x: hidden;
-          background: #051930 url('/geomatrix-landscape.png') center / cover no-repeat fixed;
-        }
-
-        .login-page-wrapper.theme-dark {
-          --text-main: var(--text-main-dark);
-          --text-muted: var(--text-muted-dark);
-          --card-bg: var(--card-bg-dark);
-          --card-border: var(--card-border-dark);
-          --card-shadow: var(--card-shadow-dark);
-          --input-bg: var(--input-bg-dark);
-          --input-border: var(--input-border-dark);
-          --chip-bg: var(--chip-bg-dark);
-          --chip-border: var(--chip-border-dark);
-        }
-
-        .login-page-wrapper.theme-light {
-          --text-main: var(--text-main-light);
-          --text-muted: var(--text-muted-light);
-          --card-bg: var(--card-bg-light);
-          --card-border: var(--card-border-light);
-          --card-shadow: var(--card-shadow-light);
-          --input-bg: var(--input-bg-light);
-          --input-border: var(--input-border-light);
-          --chip-bg: var(--chip-bg-light);
-          --chip-border: var(--chip-border-light);
-        }
-
-        /* Dark overlay layer behind content — strong enough to suppress bg watermark text */
-        .login-backdrop-overlay {
-          position: absolute;
-          inset: 0;
-          z-index: 1;
-          background: radial-gradient(ellipse at 50% 40%, rgba(8, 18, 36, 0.80) 0%, rgba(4, 14, 30, 0.97) 100%),
-                      linear-gradient(180deg, rgba(5, 18, 38, 0.55) 0%, rgba(5, 18, 38, 0.88) 100%);
-          pointer-events: none;
-        }
-
-        .login-page-wrapper *, .login-page-wrapper *::before, .login-page-wrapper *::after { box-sizing: border-box; }
-
-        /* Top Navigation / Brand Header */
-        .login-header-bar {
-          position: relative;
-          z-index: 10;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 24px 40px;
-          gap: 16px;
-          flex-wrap: wrap;
-        }
-
-        .brand-link {
-          display: flex;
-          align-items: center;
-          gap: 14px;
-          text-decoration: none;
-          color: #ffffff;
-        }
-
-        .brand-icon-box {
-          width: 42px;
-          height: 42px;
-          border-radius: 12px;
-          background: linear-gradient(135deg, rgba(37, 99, 235, 0.35), rgba(29, 78, 216, 0.15));
-          border: 1px solid rgba(147, 197, 253, 0.35);
-          display: grid;
-          place-items: center;
-          color: #60a5fa;
-          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-          flex-shrink: 0;
-        }
-
-        .brand-text-col {
-          display: flex;
-          flex-direction: column;
-          line-height: 1.15;
-        }
-
-        .brand-title {
-          font-size: 18px;
-          font-weight: 800;
-          letter-spacing: 0.08em;
-          color: #ffffff;
-          text-shadow: 0 2px 4px rgba(0,0,0,0.4);
-        }
-
-        .brand-sub {
-          font-size: 10px;
-          font-weight: 600;
-          color: #93c5fd;
-          letter-spacing: 0.08em;
-          margin-top: 3px;
-        }
-
-        .header-controls {
-          display: flex;
-          align-items: center;
-          gap: 14px;
-        }
-
-
-
-        /* Theme Selector Pill */
-        .theme-pill-group {
-          display: flex;
-          align-items: center;
-          padding: 3px;
-          background: rgba(15, 23, 42, 0.6);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          border-radius: 9999px;
-          backdrop-filter: blur(10px);
-        }
-
-        .theme-btn {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-          padding: 5px 10px;
-          border-radius: 9999px;
-          border: none;
-          background: transparent;
-          color: #94a3b8;
-          font-size: 11px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .theme-btn:hover {
-          color: #ffffff;
-        }
-
-        .theme-btn.active {
-          background: rgba(37, 99, 235, 0.85);
-          color: #ffffff;
-          box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
-        }
-
-        .theme-btn:focus-visible {
-          outline: 2px solid #60a5fa;
-          outline-offset: 1px;
-        }
-
-        /* Main Center Workspace */
-        .login-center-container {
-          position: relative;
-          z-index: 10;
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          padding: 20px 20px 60px;
-          width: 100%;
-          max-width: 1100px;
-          margin: 0 auto;
-        }
-
-        /* Hero Text Header above card */
-        .hero-header {
-          text-align: center;
-          margin-bottom: 24px;
-          max-width: 600px;
-        }
-
-        .hero-eyebrow {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.12em;
-          text-transform: uppercase;
-          color: #60a5fa;
-          margin-bottom: 8px;
-        }
-
-        .hero-headline {
-          font-size: 26px;
-          font-weight: 800;
-          color: #ffffff;
-          line-height: 1.25;
-          margin: 0 0 8px;
-          text-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
-        }
-
-        .hero-description {
-          font-size: 13px;
-          color: #cbd5e1;
-          line-height: 1.5;
-          margin: 0;
-        }
-
-        /* Blended Glass Card */
-        .glass-card {
-          width: min(440px, 100%);
-          background: var(--card-bg);
-          border: 1px solid var(--card-border);
-          box-shadow: var(--card-shadow);
-          border-radius: 20px;
-          padding: 36px 32px;
-          backdrop-filter: blur(20px) saturate(180%);
-          -webkit-backdrop-filter: blur(20px) saturate(180%);
-          transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
-        }
-
-        .card-header {
-          margin-bottom: 24px;
-          text-align: center;
-        }
-
-        .card-header h2 {
-          font-size: 20px;
-          font-weight: 700;
-          margin: 0 0 6px;
-          color: var(--text-main);
-        }
-
-        .card-header p {
-          font-size: 12px;
-          color: var(--text-muted);
-          margin: 0;
-        }
-
-        /* Demo Account Quick Chips */
-        .demo-chips-section {
-          margin-bottom: 20px;
-          padding: 12px;
-          border-radius: 12px;
-          background: var(--chip-bg);
-          border: 1px solid var(--chip-border);
-        }
-
-        .demo-chips-label {
-          font-size: 10px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-          color: var(--text-muted);
-          margin-bottom: 8px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-
-        .demo-chips-grid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 6px;
-        }
-
-        .demo-chip-btn {
-          padding: 7px 4px;
-          border-radius: 8px;
-          border: 1px solid var(--chip-border);
-          background: var(--input-bg);
-          color: var(--text-main);
-          font-size: 11px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.15s ease;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 2px;
-        }
-
-        .demo-chip-btn:hover {
-          border-color: #3b82f6;
-          background: rgba(37, 99, 235, 0.15);
-          color: #3b82f6;
-          transform: translateY(-1px);
-        }
-
-        .demo-chip-btn.active {
-          border-color: #2563eb;
-          background: rgba(37, 99, 235, 0.2);
-          color: #60a5fa;
-        }
-
-        .demo-chip-role {
-          font-size: 11px;
-          font-weight: 700;
-        }
-
-        .demo-chip-sub {
-          font-size: 8px;
-          color: var(--text-muted);
-          font-weight: 500;
-        }
-
-        /* Form Inputs */
-        .form-group {
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-          margin-bottom: 20px;
-        }
-
-        .field-unit {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-
-        .field-label {
-          font-size: 12px;
-          font-weight: 600;
-          color: var(--text-main);
-          display: flex;
-          justify-content: space-between;
-        }
-
-        .input-relative {
-          position: relative;
-          display: flex;
-          align-items: center;
-        }
-
-        .input-icon {
-          position: absolute;
-          left: 14px;
-          color: var(--text-muted);
-          pointer-events: none;
-          transition: color 0.2s ease;
-        }
-
-        .text-input {
-          width: 100%;
-          height: 44px;
-          padding: 0 14px 0 42px;
-          border-radius: 10px;
-          background: var(--input-bg);
-          border: 1px solid var(--input-border);
-          color: var(--text-main);
-          font-size: 13px;
-          font-weight: 500;
-          outline: none;
-          transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-        }
-
-        .text-input:focus {
-          border-color: #3b82f6;
-          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
-          background: var(--card-bg);
-        }
-
-        .text-input:focus + .input-icon,
-        .input-relative:focus-within .input-icon {
-          color: #3b82f6;
-        }
-
-        /* Error Alert */
-        .error-alert {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 10px 14px;
-          border-radius: 10px;
-          background: rgba(239, 68, 68, 0.12);
-          border: 1px solid rgba(239, 68, 68, 0.3);
-          color: #f87171;
-          font-size: 12px;
-          font-weight: 500;
-          margin-bottom: 16px;
-        }
-
-        /* Primary Submit Button */
-        .submit-btn {
-          width: 100%;
-          height: 44px;
-          border-radius: 10px;
-          border: none;
-          background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
-          color: #ffffff;
-          font-size: 14px;
-          font-weight: 600;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-          box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
-          transition: all 0.2s ease;
-        }
-
-        .submit-btn:hover:not(:disabled) {
-          background: linear-gradient(135deg, #1e40af 0%, #1d4ed8 100%);
-          box-shadow: 0 6px 20px rgba(37, 99, 235, 0.5);
-          transform: translateY(-1px);
-        }
-
-        .submit-btn:active:not(:disabled) {
-          transform: translateY(0);
-        }
-
-        .submit-btn:focus-visible {
-          outline: 2px solid #60a5fa;
-          outline-offset: 2px;
-        }
-
-        .submit-btn:disabled {
-          opacity: 0.65;
-          cursor: not-allowed;
-          box-shadow: none;
-        }
-
-        /* Divider */
-        .divider-line {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          margin: 18px 0;
-          color: var(--text-muted);
-          font-size: 11px;
-          font-weight: 500;
-        }
-
-        .divider-line::before,
-        .divider-line::after {
-          content: '';
-          flex: 1;
-          height: 1px;
-          background: var(--input-border);
-        }
-
-        /* Google Login Button */
-        .google-button-wrapper {
-          position: relative;
-          width: 100%;
-          min-height: 44px;
-          display: flex;
-          justify-content: center;
-        }
-
-        .google-button {
-          width: 100%;
-          min-width: 0;
-          min-height: 44px;
-        }
-
-        .sign-in-loading {
-          position: absolute;
-          inset: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 10px;
-          font-size: 13px;
-          color: var(--text-main);
-        }
-
-        .sign-in-unavailable { position: absolute; margin: 0; font-size: 12px; text-align: center; }
-        .sign-in-notice { min-height: 18px; margin: 12px 0 0; font-size: 12px; line-height: 1.5; text-align: center; color: var(--text-muted); }
-
-        .google-fallback-btn {
-          width: 100%;
-          height: 44px;
-          border-radius: 10px;
-          border: 1px solid var(--input-border);
-          background: var(--input-bg);
-          color: var(--text-main);
-          font-size: 13px;
-          font-weight: 600;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 10px;
-          transition: all 0.2s ease;
-        }
-
-        .google-fallback-btn:hover:not(:disabled) {
-          border-color: #3b82f6;
-          background: var(--chip-bg);
-          transform: translateY(-1px);
-        }
-
-        .google-fallback-btn:focus-visible {
-          outline: 2px solid #60a5fa;
-          outline-offset: 2px;
-        }
-
-        /* Card Footer Disclaimer */
-        .card-footer {
-          margin-top: 22px;
-          padding-top: 14px;
-          border-top: 1px solid var(--input-border);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 6px;
-          font-size: 11px;
-          color: var(--text-muted);
-        }
-
-        /* Spinning loader animation */
-        .spinner {
-          animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-
-        /* Responsive Breakpoints */
-        @media (max-width: 640px) {
-          .login-header-bar {
-            padding: 16px 20px;
-          }
-
-          .sih-badge {
-            display: none;
-          }
-
-          .hero-headline {
-            font-size: 21px;
-          }
-
-          .hero-description {
-            font-size: 12px;
-          }
-
-          .login-center-container {
-            padding: 10px 16px 40px;
-          }
-
-          .glass-card {
-            padding: 26px 22px;
-            border-radius: 16px;
-          }
-
-          .brand-title {
-            font-size: 16px;
-          }
-
-          .brand-sub {
-            font-size: 9px;
-          }
-        }
-      `}</style>
-
-      {/* Dark overlay over background landscape image */}
-      <div className="login-backdrop-overlay" aria-hidden="true" />
-
-      {/* Header bar */}
-      <header className="login-header-bar">
-        <a href="#main" className="brand-link">
-          <div className="brand-icon-box">
-            <Map size={20} />
-          </div>
-          <div className="brand-text-col">
-            <span className="brand-title">GEOMATRIX</span>
-            <span className="brand-sub">LAND ACQUISITION AI</span>
-          </div>
-        </a>
-
-        <div className="header-controls">
-          <div className="theme-pill-group" role="radiogroup" aria-label="Theme mode selector">
-            <button
-              type="button"
-              className={`theme-btn ${themeMode === 'light' ? 'active' : ''}`}
-              onClick={() => setThemeMode('light')}
-              aria-checked={themeMode === 'light'}
-              role="radio"
-              title="Light theme"
-            >
-              <Sun size={13} />
-              <span>Light</span>
-            </button>
-            <button
-              type="button"
-              className={`theme-btn ${themeMode === 'dark' ? 'active' : ''}`}
-              onClick={() => setThemeMode('dark')}
-              aria-checked={themeMode === 'dark'}
-              role="radio"
-              title="Dark theme"
-            >
-              <Moon size={13} />
-              <span>Dark</span>
-            </button>
-            <button
-              type="button"
-              className={`theme-btn ${themeMode === 'system' ? 'active' : ''}`}
-              onClick={() => setThemeMode('system')}
-              aria-checked={themeMode === 'system'}
-              role="radio"
-              title="System theme"
-            >
-              <Laptop size={13} />
-              <span>System</span>
-            </button>
+      <aside className="auth-story" aria-label="About GEOMATRIX">
+        <a href="#main" className="auth-brand"><span className="auth-brand-icon"><Map size={23} /></span><span>GEOMATRIX<small>LAND ACQUISITION INTELLIGENCE</small></span></a>
+        <div className="auth-story-content">
+          <div className="auth-eyebrow"><span /> CLARITY AT EVERY STAGE</div>
+          <h1>Better insight.<br />Stronger <em>decisions.</em></h1>
+          <p>Bring your land acquisition projects into focus. Understand risk, track progress, and plan your next move.</p>
+          <div className="auth-features">
+            <div><span><Layers size={19} /></span><section><h2>One connected workspace</h2><p>Projects, milestones, and alerts in one place.</p></section></div>
+            <div><span><ChartNoAxesCombined size={19} /></span><section><h2>Risk you can understand</h2><p>Explore the factors behind each prediction.</p></section></div>
+            <div><span><Radar size={19} /></span><section><h2>Stay ahead of delays</h2><p>Spot issues early and act with context.</p></section></div>
           </div>
         </div>
-      </header>
+        <div className="auth-story-footer"><span className="auth-status-dot" /> Built for informed infrastructure decisions</div>
+      </aside>
 
-      {/* Main Center Content */}
-      <main id="main" className="login-center-container">
-        {/* Hero headline above card */}
-        <div className="hero-header">
-          <div className="hero-eyebrow">
-            <span>Predict</span> · <span>Explain</span> · <span>Prioritize</span> · <span>Act</span>
+      <div className="auth-panel">
+        <header className="auth-panel-header">
+          <a href="#main" className="auth-mobile-brand"><Map size={20} /> GEOMATRIX</a>
+          <div className="auth-theme" role="radiogroup" aria-label="Theme mode selector">
+            {([{ value: 'light', icon: Sun, label: 'Light' }, { value: 'dark', icon: Moon, label: 'Dark' }, { value: 'system', icon: Laptop, label: 'System' }] as const).map(({ value, icon: Icon, label }) => (
+              <button key={value} type="button" role="radio" aria-checked={themeMode === value} aria-label={label} title={`${label} theme`} className={themeMode === value ? 'active' : ''} onClick={() => setThemeMode(value)}><Icon size={16} /></button>
+            ))}
           </div>
-          <h1 className="hero-headline">Land Acquisition Risk Intelligence</h1>
-          <p className="hero-description">
-            Early-warning risk scoring, XAI factor diagnostics, and decision automation for infrastructure projects.
-          </p>
-        </div>
+        </header>
 
-        {/* Centered Blended Glass Card */}
-        <div className="glass-card">
-          <div className="card-header">
-            <h2>Command Center Sign In</h2>
-            <p>Sign in with your Google account to continue.</p>
-          </div>
-
-          {error && (
-            <div className="error-alert" role="alert">
-              <span>{error}</span>
+        <main id="main" className="auth-main">
+          <div className="auth-form-card">
+            <div className="auth-welcome-icon"><ShieldCheck size={25} /></div>
+            <div className="auth-heading"><p className="auth-kicker">YOUR PROJECT COMMAND CENTER</p><h2>{registering ? 'Create your account' : 'Welcome back'}</h2><p>{registering ? 'A clearer view of your projects starts here.' : 'Sign in to continue to your workspace.'}</p></div>
+            <div className="auth-tabs" aria-label="Account access">
+              <button type="button" aria-pressed={!registering} disabled={busy} onClick={() => switchMode('login')}>Sign in</button>
+              <button type="button" aria-pressed={registering} disabled={busy} onClick={() => switchMode('register')}>Create account</button>
             </div>
-          )}
 
-          <div className="google-button-wrapper" aria-busy={sessionState !== 'signed-out' || isLoading || (isGoogleAuthReady && sdkState === 'loading')}>
-            <div ref={googleButton} className="google-button"
-              style={{ visibility: sessionState === 'signed-out' && sdkState === 'ready' && !isLoading ? 'visible' : 'hidden' }} />
-            {(sessionState !== 'signed-out' || isLoading || (isGoogleAuthReady && sdkState === 'loading')) && (
-              <div className="sign-in-loading" role="status">
-                <Loader2 size={18} className="spinner" aria-hidden="true" />
-                <span>{sessionState === 'checking' ? 'Checking your session…' : sessionState === 'redirecting' ? 'Opening your dashboard…' : isLoading ? 'Signing you in…' : 'Loading Google sign-in…'}</span>
-              </div>
-            )}
-            {sessionState === 'signed-out' && !isGoogleAuthReady && (
-              <p className="sign-in-unavailable" role="status">Google sign-in is currently unavailable. Please contact the administrator.</p>
-            )}
-          </div>
-          {sdkState === 'error' && (
-            <button type="button" className="google-fallback-btn" onClick={() => { setError(''); setSdkState('loading'); setRetry((value) => value + 1); }}>
-              Retry Google sign-in
-            </button>
-          )}
-          <p className="sign-in-notice" role="status" aria-live="polite">
-            {slowSignIn ? 'The sign-in service is starting. This may take up to a minute.' : notice}
-          </p>
+            {!passwordAuthEnabled && <p className="auth-availability" role="status">Email accounts are being set up. Continue with Google for now.</p>}
+            {error && <div className="error-alert" role="alert">{error}</div>}
+            <form onSubmit={submitPassword} aria-label={registering ? 'Create an account' : 'Sign in with email'}>
+              <fieldset disabled={busy || !passwordAuthEnabled}>
+                {registering && <div className="auth-field"><label htmlFor="auth-name">Full name</label><input id="auth-name" name="name" autoComplete="name" required maxLength={100} placeholder="Your full name" value={name} onChange={e => setName(e.target.value)} /></div>}
+                <div className="auth-field"><label htmlFor="auth-email">Email address <span>Your sign-in ID</span></label><input id="auth-email" name="email" type="email" autoComplete="username" inputMode="email" autoCapitalize="none" spellCheck={false} required maxLength={254} placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} /></div>
+                <div className="auth-field"><label htmlFor="auth-password">Password</label><div className="auth-password"><input id="auth-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={registering ? 'new-password' : 'current-password'} minLength={registering ? 12 : 1} maxLength={128} required placeholder={registering ? 'Create a strong password' : 'Enter your password'} aria-describedby={registering ? 'password-help' : undefined} value={password} onChange={e => setPassword(e.target.value)} /><button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div>{registering && <p id="password-help" className="auth-hint">Use 12–128 characters. A longer passphrase works well.</p>}</div>
+                {registering && <div className="auth-field"><label htmlFor="auth-confirm">Confirm password</label><input id="auth-confirm" name="confirmPassword" type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={12} maxLength={128} placeholder="Enter your password again" value={confirmation} onChange={e => setConfirmation(e.target.value)} /></div>}
+                <button className="auth-submit" type="submit">{busy ? <><Loader2 size={18} className="spinner" /> {sessionState === 'checking' ? 'Checking your session…' : sessionState === 'redirecting' ? 'Opening your dashboard…' : registering ? 'Creating your account…' : 'Signing you in…'}</> : <>{registering ? 'Create account' : 'Sign in'}<ArrowRight size={18} /></>}</button>
+              </fieldset>
+            </form>
 
-          <div className="card-footer">
-            <ShieldCheck size={14} style={{ color: '#10b981' }} />
-            <span>Secure Google sign-in</span>
+            <div className="auth-divider"><span>or continue with Google</span></div>
+            <div className="google-button-wrapper" aria-busy={busy || (isGoogleAuthReady && sdkState === 'loading')}>
+              <div ref={googleButton} className="google-button" style={{ visibility: !busy && sdkState === 'ready' ? 'visible' : 'hidden' }} />
+              {!busy && isGoogleAuthReady && sdkState === 'loading' && <div className="sign-in-loading" role="status"><Loader2 size={18} className="spinner" /> Loading Google sign-in…</div>}
+              {!busy && !isGoogleAuthReady && (googleSignInUrl ? <a className="auth-google-link" href={googleSignInUrl}><span className="auth-google-letter" aria-hidden="true">G</span> Continue with Google<ArrowRight size={16} /></a> : <p className="auth-hint">Google sign-in is being configured. Please try again shortly.</p>)}
+            </div>
+            {!isGoogleAuthReady && googleSignInUrl && <p className="auth-hint auth-preview-note">Google sign-in opens the live GEOMATRIX site.</p>}
+            {sdkState === 'error' && <button type="button" className="google-fallback-btn" disabled={busy} onClick={() => { setError(''); setSdkState('loading'); setRetry(value => value + 1); }}>Retry Google sign-in</button>}
+            <p className="sign-in-notice" role="status" aria-live="polite">{slowSignIn ? 'The sign-in service is starting. This may take up to a minute.' : notice}</p>
+            <p className="auth-switch">{registering ? 'Already have an account?' : 'New to GEOMATRIX?'} <button type="button" disabled={busy} onClick={() => switchMode(registering ? 'login' : 'register')}>{registering ? 'Sign in' : 'Create an account'}</button></p>
+            <div className="auth-security"><ShieldCheck size={14} /><span>Protected sign-in · Secure Google sign-in</span></div>
           </div>
-        </div>
-      </main>
+        </main>
+        <footer className="auth-panel-footer">GEOMATRIX <span>Land acquisition, with greater clarity.</span></footer>
+      </div>
     </div>
   );
 }

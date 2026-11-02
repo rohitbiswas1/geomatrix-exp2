@@ -1,10 +1,10 @@
 name: Login browser checks
 on:
   push:
-    branches: [main, fix/login-page]
-    paths: ['app/login/**', 'lib/googleIdentity.ts', 'app/api/auth/**', 'tests/login-ui.test.mjs', '.github/workflows/login-ui.yml']
+    branches: [main, fix/login-page, fix/password-auth]
+    paths: ['app/login/**', 'lib/googleIdentity.ts', 'lib/passwordAuth.ts', 'lib/authErrors.ts', 'app/api/auth/**', 'tests/login-ui.test.mjs', '.github/workflows/login-ui.yml']
   pull_request:
-    paths: ['app/login/**', 'lib/googleIdentity.ts', 'app/api/auth/**', 'tests/login-ui.test.mjs', '.github/workflows/login-ui.yml']
+    paths: ['app/login/**', 'lib/googleIdentity.ts', 'lib/passwordAuth.ts', 'lib/authErrors.ts', 'app/api/auth/**', 'tests/login-ui.test.mjs', '.github/workflows/login-ui.yml']
 permissions:
   contents: read
 jobs:

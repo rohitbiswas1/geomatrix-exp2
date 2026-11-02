@@ -20,21 +20,28 @@ class _DynamicEngine:
 
     def __init__(self):
         self._engine = None
+        self._current_url = None
 
     def _ensure_engine(self):
         current_url = globals().get("DATABASE_URL", DATABASE_URL)
+        if current_url.startswith("postgres://"):
+            current_url = current_url.replace("postgres://", "postgresql+psycopg://", 1)
+        elif current_url.startswith("postgresql://"):
+            current_url = current_url.replace("postgresql://", "postgresql+psycopg://", 1)
         is_sqlite = current_url.startswith("sqlite")
-        engine_options = {"echo": False}
+        engine_options = {"echo": False, "pool_pre_ping": True}
         if is_sqlite:
             engine_options.update({
                 "connect_args": {"check_same_thread": False},
                 "poolclass": StaticPool,
             })
-        if self._engine is None:
+        else:
+            engine_options["connect_args"] = {"connect_timeout": 10}
+        if self._engine is None or self._current_url != current_url:
+            if self._engine is not None:
+                self._engine.dispose()
             self._engine = create_engine(current_url, **engine_options)
-        elif str(self._engine.url) != current_url:
-            self._engine.dispose()
-            self._engine = create_engine(current_url, **engine_options)
+            self._current_url = current_url
         return self._engine
 
     def __getattr__(self, name):
@@ -45,7 +52,17 @@ class _DynamicEngine:
 
 
 engine = _DynamicEngine()
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+_session_factory = sessionmaker(autocommit=False, autoflush=False)
+
+
+def SessionLocal():
+    """Bind to a real Engine so every flush shares the session's transaction.
+
+    SQLAlchemy caches connections by the Engine object, not this module's
+    dynamic proxy. Binding the proxy can open another PostgreSQL connection
+    between flushes and lose visibility of the transaction's pending records.
+    """
+    return _session_factory(bind=engine._ensure_engine())
 
 # New columns added in the real-data upgrade. ALTER TABLE is idempotent because
 # SQLite raises "duplicate column name" which we silently ignore.

@@ -12,6 +12,24 @@ from sqlalchemy.orm import declarative_base, relationship
 Base = declarative_base()
 
 
+class PasswordAccount(Base):
+    __tablename__ = "password_accounts"
+
+    id = Column(String, primary_key=True)
+    email = Column(String(254), unique=True, nullable=False)
+    name = Column(String(100), nullable=False)
+    password_hash = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AuthAttempt(Base):
+    __tablename__ = "auth_attempts"
+
+    id = Column(String, primary_key=True)
+    count = Column(Integer, default=0, nullable=False)
+    attempted_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 class AuthSession(Base):
     __tablename__ = "auth_sessions"
 

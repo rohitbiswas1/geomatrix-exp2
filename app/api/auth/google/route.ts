@@ -1,3 +1,4 @@
+import { authErrorMessage } from '../../../../lib/authErrors';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
       signal: AbortSignal.timeout(70000),
     });
     const payload = await upstream.json();
-    if (!upstream.ok) return jsonError(payload.detail || 'Google sign-in failed.', upstream.status);
+    if (!upstream.ok) return jsonError(authErrorMessage(payload, 'Google sign-in failed. Please try again.'), upstream.status);
     if (typeof payload.token !== 'string' || !payload.user || !Number.isInteger(payload.expires_in) || payload.expires_in <= 0) {
       return jsonError('Invalid authentication response.', 502);
     }
