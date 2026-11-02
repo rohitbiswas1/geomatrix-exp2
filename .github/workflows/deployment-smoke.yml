@@ -7,36 +7,65 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    timeout-minutes: 10
     steps:
-      - name: Verify deployed account API and production interface
-        shell: bash
+      - name: Verify real production account lifecycle on persistent storage
         run: |
-          set -euo pipefail
-          ready=0
-          for attempt in $(seq 1 20); do
-            health=$(curl -sS --max-time 20 -o /tmp/health -w '%{http_code}' https://geomatrix-api-backend.onrender.com/health || true)
-            register=$(curl -sS --max-time 20 -o /tmp/register -w '%{http_code}' -H 'Content-Type: application/json' --data '{}' https://geomatrix-api-backend.onrender.com/api/auth/register || true)
-            echo "Backend rollout $attempt: health HTTP $health, registration validation HTTP $register"
-            if [ "$health" = 200 ] && [ "$register" = 422 ]; then ready=1; break; fi
-            sleep 15
-          done
-          test "$ready" = 1
-          python3 -c 'import json; d=json.load(open("/tmp/register")); assert isinstance(d.get("detail"),str); assert "input" not in d'
-          ready=0
-          for attempt in $(seq 1 16); do
-            curl -sS --max-time 25 https://geomatrix-exp2.vercel.app/login -o /tmp/page || true
-            if python3 -c 'from pathlib import Path; s=Path("/tmp/page").read_text(); assert "Welcome back" in s and "Email accounts are being set up." in s'; then ready=1; break; fi
-            sleep 10
-          done
-          test "$ready" = 1
-          code=$(curl -sS --max-time 80 -o /tmp/front-login -w '%{http_code}' -H 'Content-Type: application/json' -H 'Origin: https://geomatrix-exp2.vercel.app' --data '{"email":"deployment-smoke@example.invalid","password":"deliberately-invalid-test-password"}' https://geomatrix-exp2.vercel.app/api/auth/login)
-          echo "Production proxy preserves account storage guard: HTTP $code"
-          test "$code" = 503
-          python3 -c 'import json; d=json.load(open("/tmp/front-login")); assert isinstance(d.get("error"),str); assert "Google" in d["error"]; assert "token" not in d'
-          code=$(curl -sS --max-time 80 -o /tmp/front-google -w '%{http_code}' -H 'Content-Type: application/json' -H 'Origin: https://geomatrix-exp2.vercel.app' --data '{"credential":"invalid-deployment-smoke-test"}' https://geomatrix-exp2.vercel.app/api/auth/google)
-          echo "Google rejects invalid credentials: HTTP $code"
-          test "$code" = 401
-          code=$(curl -sS --max-time 30 -o /tmp/front-projects -w '%{http_code}' https://geomatrix-exp2.vercel.app/api/projects)
-          echo "Production API protection: HTTP $code"
-          test "$code" = 401
+          python3 - <<'PY'
+          import json, secrets, uuid, time, urllib.request, urllib.error, http.cookiejar
+          
+          base = "https://geomatrix-exp2.vercel.app"
+          origin = {"Origin": base, "Content-Type": "application/json"}
+          
+          def client():
+              jar = http.cookiejar.CookieJar()
+              return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)), jar
+          
+          def call(opener, path, body=None, expected=None):
+              req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(), headers=origin, method="GET" if body is None else "POST")
+              try:
+                  response = opener.open(req, timeout=90)
+              except urllib.error.HTTPError as exc:
+                  response = exc
+              data = response.read()
+              status = response.code
+              parsed = json.loads(data) if data else None
+              if expected is not None and status != expected:
+                  raise AssertionError(path + " returned HTTP " + str(status) + ", expected " + str(expected))
+              return status, parsed
+          
+          for attempt in range(20):
+              probe, _ = client()
+              status, payload = call(probe, "/api/auth/login", {"email": "probe-" + uuid.uuid4().hex + "@example.invalid", "password": "intentionally-wrong-deployment-test"})
+              print("Persistent backend readiness:", status, flush=True)
+              if status == 401:
+                  break
+              if status != 503:
+                  raise AssertionError("Unexpected readiness response " + str(status))
+              time.sleep(10)
+          else:
+              raise AssertionError("Persistent account service did not become ready")
+          
+          email = "geomatrix-verification-" + uuid.uuid4().hex + "@example.invalid"
+          password = secrets.token_urlsafe(32)
+          opener, jar = client()
+          _, user = call(opener, "/api/auth/register", {"name": "GEOMATRIX automated verification", "email": email, "password": password}, 201)
+          assert user["email"] == email and "token" not in user and "password" not in user
+          session_cookie = next(cookie for cookie in jar if cookie.name == "geomatrix_session")
+          assert session_cookie.secure and any(key.lower() == "httponly" for key in session_cookie._rest)
+          _, me = call(opener, "/api/auth/me", expected=200)
+          assert me["user"]["email"] == email
+          call(opener, "/api/auth/logout", {}, 204)
+          call(opener, "/api/auth/me", expected=401)
+          fresh, fresh_jar = client()
+          _, logged_in = call(fresh, "/api/auth/login", {"email": email, "password": password}, 200)
+          assert logged_in["sub"] == user["sub"] and logged_in["email"] == email
+          call(fresh, "/api/auth/me", expected=200)
+          call(fresh, "/api/auth/logout", {}, 204)
+          call(fresh, "/api/auth/me", expected=401)
+          _, denied = call(fresh, "/api/auth/login", {"email": email, "password": "incorrect-verification-password"}, 401)
+          assert isinstance(denied.get("error"), str)
+          print("PASS: registration, secure cookie, session, logout, fresh password login, revocation, and wrong-password rejection")
+          print("Verification sessions revoked; no credentials retained.")
+          
+          PY
