@@ -33,6 +33,7 @@ from ml.features import FEATURE_COLUMNS, LABEL_COLUMN, REGRESSION_LABEL
 logger = logging.getLogger(__name__)
 
 MIN_SAMPLES = 10
+TRAINING_DATA_VERSION = 2
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "model_artifacts")
 os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -59,7 +60,7 @@ def _normalize_record_list(records: list) -> list:
         if rec.get("delayed") is None:
             continue
         classification = str(rec.get("data_classification", "REAL")).upper()
-        if classification in {"TEST", "TEST/SYNTHETIC", "SYNTHETIC"}:
+        if classification != "REAL":
             continue
         cleaned.append(rec)
     return cleaned
@@ -184,6 +185,7 @@ def train_model(records: list, algorithm: str = "RandomForest") -> Dict[str, Any
         "n_unique_classes": int(len(np.unique(y_clf))),
         "class_counts": {"0": int((y_clf == 0).sum()), "1": int((y_clf == 1).sum())},
         "real_label_source": True,
+        "training_data_version": TRAINING_DATA_VERSION,
         "regression_target_available": regression_available,
         "precision": precision,
         "recall": recall,
@@ -223,6 +225,8 @@ def load_active_model() -> Optional[Tuple[Any, Any, Any, Dict]]:
         if not isinstance(meta, dict):
             _clear_active_model_files()
             return None
+        if meta.get("training_data_version") != TRAINING_DATA_VERSION:
+            _clear_active_model_files(); return None
         if int(meta.get("n_samples", 0) or 0) < MIN_SAMPLES:
             _clear_active_model_files(); return None
         if int(meta.get("n_unique_classes", 0) or 0) < 2:

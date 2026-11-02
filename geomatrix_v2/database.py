@@ -4,7 +4,7 @@ SQLite remains the local default; production must provide DATABASE_URL.
 """
 import os
 import logging
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from models import Base
@@ -50,6 +50,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # New columns added in the real-data upgrade. ALTER TABLE is idempotent because
 # SQLite raises "duplicate column name" which we silently ignore.
 _MIGRATION_STATEMENTS = [
+    "ALTER TABLE historical_delay_records ADD COLUMN training_data_version INTEGER DEFAULT 1 NOT NULL",
     "ALTER TABLE projects ADD COLUMN compensation_status TEXT",
     "ALTER TABLE projects ADD COLUMN objection_count INTEGER DEFAULT 0",
     "ALTER TABLE projects ADD COLUMN legal_case_count INTEGER DEFAULT 0",
@@ -65,14 +66,15 @@ _MIGRATION_STATEMENTS = [
 
 def _run_migrations():
     """Apply schema migrations safely (idempotent)."""
-    with engine.connect() as conn:
-        for stmt in _MIGRATION_STATEMENTS:
-            try:
+    # Inspect columns instead of deliberately triggering duplicate-column errors.
+    # PostgreSQL aborts a transaction after a failed ALTER TABLE.
+    for stmt in _MIGRATION_STATEMENTS:
+        parts = stmt.split()
+        table, column = parts[2], parts[5]
+        with engine.begin() as conn:
+            columns = {entry["name"] for entry in inspect(conn).get_columns(table)}
+            if column not in columns:
                 conn.execute(text(stmt))
-                conn.commit()
-            except Exception:
-                # Column already exists — safe to ignore
-                pass
 
 
 def init_db():

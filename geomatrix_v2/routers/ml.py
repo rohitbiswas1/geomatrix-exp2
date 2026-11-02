@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import HistoricalDelayRecord, ModelRun
-from ml.train import train_model, InsufficientDataError
+from ml.train import train_model, InsufficientDataError, MIN_SAMPLES
 from ml.evaluate import get_model_status
 
 router = APIRouter(prefix="/api/model", tags=["model"])
@@ -22,21 +22,31 @@ def model_status():
     return status
 
 
+def eligible_records(db: Session):
+    return db.query(HistoricalDelayRecord).filter(
+        HistoricalDelayRecord.data_classification == "REAL",
+        HistoricalDelayRecord.training_data_version >= 2,
+        HistoricalDelayRecord.delayed.isnot(None),
+    )
+
+
 @router.get("/training-data")
 def get_training_data(db: Session = Depends(get_db)):
     """Return count and summary of available labeled training records."""
-    total = db.query(HistoricalDelayRecord).count()
-    delayed = db.query(HistoricalDelayRecord).filter_by(delayed=True).count()
+    total = eligible_records(db).count()
+    excluded = db.query(HistoricalDelayRecord).count() - total
+    delayed = eligible_records(db).filter_by(delayed=True).count()
     on_time = total - delayed
     return {
         "total_records": total,
         "delayed_count": delayed,
         "on_time_count": on_time,
-        "ready_to_train": total >= 10,
+        "ready_to_train": total >= MIN_SAMPLES and min(delayed, on_time) >= 2,
+        "excluded_records": excluded,
         "message": (
-            f"{total} labeled records available ({delayed} delayed, {on_time} on-time)."
+            f"{total} eligible real labeled records ({delayed} delayed, {on_time} on-time); {excluded} legacy or non-real records excluded."
             if total > 0
-            else "No historical records yet. Upload a labeled CSV via Data Ingestion."
+            else "No eligible historical records. Upload or re-import original labeled source data; legacy and synthetic rows cannot be used."
         )
     }
 
@@ -68,9 +78,11 @@ def trigger_training(algorithm: str = "RandomForest", db: Session = Depends(get_
     Train the ML model on all available real labeled historical records.
     Refuses if fewer than 10 real labeled records exist.
     """
-    records = db.query(HistoricalDelayRecord).all()
+    records = eligible_records(db).all()
     record_dicts = [
         {
+            "data_classification": r.data_classification,
+            "training_data_version": r.training_data_version,
             "land_area_ha": r.land_area_ha,
             "affected_families": r.affected_families,
             "pending_claims": r.pending_claims,

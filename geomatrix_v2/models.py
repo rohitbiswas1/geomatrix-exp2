@@ -96,6 +96,10 @@ class HistoricalDelayRecord(Base):
     validation_status   = Column(String, default="pending")
     data_classification = Column(String, default="REAL")
 
+    # Version 1 imports may contain approval_pending copied from the label.
+    # Re-import original source data before those records can be used again.
+    training_data_version = Column(Integer, default=1, nullable=False)
+
     # provenance
     source_name       = Column(String)
     source_url        = Column(String)
