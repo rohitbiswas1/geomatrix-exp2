@@ -7,27 +7,36 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 9
     steps:
-      - name: Wait for the new backend and verify authentication
+      - name: Verify deployed account API and production interface
         shell: bash
         run: |
           set -euo pipefail
           ready=0
-          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-            health=$(curl -sS --max-time 20 -o /tmp/geomatrix-health -w '%{http_code}' https://geomatrix-api-backend.onrender.com/health || true)
-            auth=$(curl -sS --max-time 20 -o /tmp/geomatrix-auth -w '%{http_code}' https://geomatrix-api-backend.onrender.com/api/auth/me || true)
-            echo "Rollout check $attempt: health HTTP $health, session endpoint HTTP $auth"
-            if [ "$health" = 200 ] && [ "$auth" = 401 ]; then ready=1; break; fi
-            sleep 20
+          for attempt in $(seq 1 20); do
+            health=$(curl -sS --max-time 20 -o /tmp/health -w '%{http_code}' https://geomatrix-api-backend.onrender.com/health || true)
+            register=$(curl -sS --max-time 20 -o /tmp/register -w '%{http_code}' -H 'Content-Type: application/json' --data '{}' https://geomatrix-api-backend.onrender.com/api/auth/register || true)
+            echo "Backend rollout $attempt: health HTTP $health, registration validation HTTP $register"
+            if [ "$health" = 200 ] && [ "$register" = 422 ]; then ready=1; break; fi
+            sleep 15
           done
           test "$ready" = 1
-          code=$(curl -sS --max-time 30 -o /tmp/geomatrix-google -w '%{http_code}' -H 'Content-Type: application/json' --data '{"credential":"invalid-deployment-smoke-test"}' https://geomatrix-api-backend.onrender.com/api/auth/google)
+          python3 -c 'import json; d=json.load(open("/tmp/register")); assert isinstance(d.get("detail"),str); assert "input" not in d'
+          ready=0
+          for attempt in $(seq 1 16); do
+            curl -sS --max-time 25 https://geomatrix-exp2.vercel.app/login -o /tmp/page || true
+            if python3 -c 'from pathlib import Path; s=Path("/tmp/page").read_text(); assert "Welcome back" in s and "Email accounts are being set up." in s'; then ready=1; break; fi
+            sleep 10
+          done
+          test "$ready" = 1
+          code=$(curl -sS --max-time 80 -o /tmp/front-login -w '%{http_code}' -H 'Content-Type: application/json' -H 'Origin: https://geomatrix-exp2.vercel.app' --data '{"email":"deployment-smoke@example.invalid","password":"deliberately-invalid-test-password"}' https://geomatrix-exp2.vercel.app/api/auth/login)
+          echo "Production proxy preserves account storage guard: HTTP $code"
+          test "$code" = 503
+          python3 -c 'import json; d=json.load(open("/tmp/front-login")); assert isinstance(d.get("error"),str); assert "Google" in d["error"]; assert "token" not in d'
+          code=$(curl -sS --max-time 80 -o /tmp/front-google -w '%{http_code}' -H 'Content-Type: application/json' -H 'Origin: https://geomatrix-exp2.vercel.app' --data '{"credential":"invalid-deployment-smoke-test"}' https://geomatrix-exp2.vercel.app/api/auth/google)
           echo "Google rejects invalid credentials: HTTP $code"
           test "$code" = 401
-          code=$(curl -sS --max-time 30 -o /tmp/geomatrix-front-google -w '%{http_code}' -H 'Content-Type: application/json' -H 'Origin: https://geomatrix-exp2.vercel.app' --data '{"credential":"invalid-deployment-smoke-test"}' https://geomatrix-exp2.vercel.app/api/auth/google)
-          echo "Frontend-to-backend Google verification: HTTP $code"
-          test "$code" = 401
-          code=$(curl -sS --max-time 30 -o /tmp/geomatrix-front-projects -w '%{http_code}' https://geomatrix-exp2.vercel.app/api/projects)
-          echo "Frontend project API protection: HTTP $code"
+          code=$(curl -sS --max-time 30 -o /tmp/front-projects -w '%{http_code}' https://geomatrix-exp2.vercel.app/api/projects)
+          echo "Production API protection: HTTP $code"
           test "$code" = 401
