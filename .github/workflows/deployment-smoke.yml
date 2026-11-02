@@ -25,3 +25,9 @@ jobs:
           code=$(curl -sS --max-time 30 -o /tmp/geomatrix-google -w '%{http_code}' -H 'Content-Type: application/json' --data '{"credential":"invalid-deployment-smoke-test"}' https://geomatrix-api-backend.onrender.com/api/auth/google)
           echo "Google rejects invalid credentials: HTTP $code"
           test "$code" = 401
+          code=$(curl -sS --max-time 30 -o /tmp/geomatrix-front-google -w '%{http_code}' -H 'Content-Type: application/json' -H 'Origin: https://geomatrix-exp2.vercel.app' --data '{"credential":"invalid-deployment-smoke-test"}' https://geomatrix-exp2.vercel.app/api/auth/google)
+          echo "Frontend-to-backend Google verification: HTTP $code"
+          test "$code" = 401
+          code=$(curl -sS --max-time 30 -o /tmp/geomatrix-front-projects -w '%{http_code}' https://geomatrix-exp2.vercel.app/api/projects)
+          echo "Frontend project API protection: HTTP $code"
+          test "$code" = 401
