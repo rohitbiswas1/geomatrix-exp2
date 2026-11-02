@@ -1,11 +1,3 @@
-import { NextResponse } from 'next/server';
-import { demoAlerts } from '../../_demo-data';
+import { proxyBackend } from '../../../../lib/backend';
 
-export async function GET() {
-  const total = demoAlerts.length;
-  const open = demoAlerts.filter((item) => item.status === 'Open').length;
-  const critical = demoAlerts.filter((item) => item.severity === 'Critical').length;
-  const high = demoAlerts.filter((item) => item.severity === 'High').length;
-
-  return NextResponse.json({ total, open, critical, high });
-}
+export const GET = proxyBackend;

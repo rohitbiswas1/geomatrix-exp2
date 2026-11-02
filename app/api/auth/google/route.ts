@@ -1,42 +1,32 @@
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { backendUrl, checkOrigin, jsonError, SESSION_COOKIE } from '../../../../lib/backend';
 
-const requestSchema = z.object({ credential: z.string().min(1) });
+const requestSchema = z.object({ credential: z.string().min(1).max(16384) });
 
 export async function POST(request: Request) {
-  const parsed = requestSchema.safeParse(await request.json());
-  if (!parsed.success) {
-    return NextResponse.json({ error: 'Google credential is required.' }, { status: 400 });
+  const originError = checkOrigin(request);
+  if (originError) return originError;
+  const parsed = requestSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return jsonError('A Google credential is required.', 400);
+  try {
+    const upstream = await fetch(backendUrl('/api/auth/google'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parsed.data), cache: 'no-store', redirect: 'error',
+      signal: AbortSignal.timeout(15000),
+    });
+    const payload = await upstream.json();
+    if (!upstream.ok) return jsonError(payload.detail || 'Google sign-in failed.', upstream.status);
+    if (typeof payload.token !== 'string' || !payload.user || !Number.isInteger(payload.expires_in) || payload.expires_in <= 0) {
+      return jsonError('Invalid authentication response.', 502);
+    }
+    (await cookies()).set(SESSION_COOKIE, payload.token, {
+      httpOnly: true, secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax', path: '/', maxAge: payload.expires_in,
+    });
+    return NextResponse.json(payload.user, { headers: { 'Cache-Control': 'no-store' } });
+  } catch {
+    return jsonError('Sign-in service is temporarily unavailable.', 503);
   }
-
-  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-  if (!clientId) {
-    return NextResponse.json({ error: 'Google sign-in is not configured.' }, { status: 503 });
-  }
-
-  const tokenResponse = await fetch(
-    `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(parsed.data.credential)}`,
-    { cache: 'no-store' },
-  );
-  if (!tokenResponse.ok) {
-    return NextResponse.json({ error: 'Google credential could not be verified.' }, { status: 401 });
-  }
-
-  const token = await tokenResponse.json() as {
-    aud?: string;
-    email?: string;
-    email_verified?: string;
-    name?: string;
-  };
-
-  if (
-    token.aud !== clientId ||
-    token.email_verified !== 'true' ||
-    !token.email ||
-    !token.name
-  ) {
-    return NextResponse.json({ error: 'Google account verification failed.' }, { status: 401 });
-  }
-
-  return NextResponse.json({ email: token.email, name: token.name });
 }

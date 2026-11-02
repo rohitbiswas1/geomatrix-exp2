@@ -1,6 +1,3 @@
-import { NextResponse } from 'next/server';
-import { buildDashboardSummary } from '../../_demo-data';
+import { proxyBackend } from '../../../../lib/backend';
 
-export async function GET() {
-  return NextResponse.json(buildDashboardSummary());
-}
+export const GET = proxyBackend;

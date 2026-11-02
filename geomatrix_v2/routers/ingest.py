@@ -77,6 +77,13 @@ def _validate_coordinates(lat: Any, lng: Any) -> tuple[float | None, float | Non
     return lat_value, lng_value
 
 
+def _classification_for_record(row: dict, source_name: str) -> str:
+    if _classification_for_source(source_name) != "REAL":
+        return "TEST"
+    explicit = str(_field_value(row, "data_classification") or "REAL").strip().upper()
+    return explicit if explicit in {"REAL", "TEST", "TEST/SYNTHETIC", "SYNTHETIC"} else "UNKNOWN"
+
+
 def _classification_for_source(source_name: str) -> str:
     name = (source_name or "").lower()
     if "test" in name or "sample" in name or "demo" in name:
@@ -319,7 +326,7 @@ async def upload_csv(
                     continue
 
                 existing = db.query(HistoricalDelayRecord).filter_by(source_record_id=record_id).first()
-                if existing:
+                if existing and existing.training_data_version >= 2:
                     skipped += 1
                     continue
 
@@ -337,11 +344,16 @@ async def upload_csv(
 
                 approval_pending = _coerce_bool(_field_value(row, "approval_pending", "approval_pending_flag"))
                 if approval_pending is None:
-                    approval_pending = delayed
+                    approval_pending = None  # Missing inputs must never be inferred from the target label.
 
-                classification = _classification_for_source(source_name)
+                classification = _classification_for_record(row, source_name)
 
+                if existing:
+                    # Replace legacy data using the original source, not by trying
+                    # to guess which stored feature values were derived from labels.
+                    db.delete(existing)
                 rec = HistoricalDelayRecord(
+                    training_data_version=2,
                     id=str(uuid.uuid4()),
                     project_code=_normalize_string(project_code)[:50],
                     state=_normalize_string(state)[:100],
@@ -392,7 +404,7 @@ async def upload_csv(
                 lng_raw = _field_value(row, "longitude", "lon", "lng")
                 lat, lng = _validate_coordinates(lat_raw, lng_raw)
 
-                classification = _classification_for_source(source_name)
+                classification = _classification_for_record(row, source_name)
 
                 proj = Project(
                     id=str(uuid.uuid4()),

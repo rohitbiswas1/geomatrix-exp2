@@ -596,3 +596,13 @@ Live service endpoints and deployed features depend on the environment configura
 ## License
 
 No explicit open-source license is currently declared in this repository. Unless a license is added, the repository should be treated according to the default rights granted by copyright law.
+
+
+### Session and data-integrity update
+
+Browser API calls now use authenticated same-origin routes backed by FastAPI.
+Google sign-in issues revocable database sessions; browser storage flags are no
+longer trusted. Follow the [authentication and real-data upgrade](DEPLOYMENT.md#authentication-and-real-data-upgrade)
+for the required Google client ID, application origin, allowed-account settings,
+and historical-data re-import/retraining steps. Older training records and model
+artifacts are excluded until their original source data is re-imported.

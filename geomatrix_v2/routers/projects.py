@@ -272,3 +272,11 @@ def list_predictions(project_id: str, db: Session = Depends(get_db)):
         }
         for pr in preds
     ]
+
+
+@router.get('/{project_id}/risk')
+def stored_risk(project_id: str, db: Session = Depends(get_db)):
+    project = get_project(project_id, db)
+    fields = ('risk_score', 'risk_level', 'delay_probability', 'predicted_delay_days', 'confidence')
+    return {'project_id': project.id, 'status': 'ok' if project.risk_score is not None else 'not_predicted',
+            **{field: getattr(project, field) for field in fields}}

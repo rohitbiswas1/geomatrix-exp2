@@ -73,7 +73,8 @@ def test_synthetic_records_are_excluded_from_training():
         _real_record(delayed=True, actual_delay_days=45, data_classification="REAL"),
         _real_record(delayed=False, actual_delay_days=10, data_classification="TEST"),
     ]
-    filtered = [r for r in records if r.get("data_classification") not in {"TEST", "SYNTHETIC"}]
+    from ml.train import _normalize_record_list
+    filtered = _normalize_record_list(records)
     assert len(filtered) == 1
     assert filtered[0]["data_classification"] == "REAL"
 
@@ -125,3 +126,23 @@ def test_train_model_writes_real_metrics_for_valid_training_data():
     assert meta["feature_names"]
     assert meta["model_version"]
     assert meta["n_unique_classes"] == 2
+
+
+
+def test_legacy_model_metadata_is_not_loaded():
+    import json
+    from pathlib import Path
+    from ml.train import load_active_model
+    records = [_real_record(delayed=(i % 2 == 0)) for i in range(20)]
+    meta = train_model(records)
+    assert load_active_model() is not None
+    path = Path(train_module.MODEL_DIR) / f"meta_{meta['run_id']}.json"
+    del meta['training_data_version']
+    path.write_text(json.dumps(meta))
+    assert load_active_model() is None
+
+
+def test_too_few_samples_in_minority_class_rejected():
+    records = [_real_record(delayed=(i == 0)) for i in range(10)]
+    with pytest.raises(InsufficientDataError, match="per class"):
+        train_model(records)

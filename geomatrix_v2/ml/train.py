@@ -33,6 +33,7 @@ from ml.features import FEATURE_COLUMNS, LABEL_COLUMN, REGRESSION_LABEL
 logger = logging.getLogger(__name__)
 
 MIN_SAMPLES = 10
+TRAINING_DATA_VERSION = 2
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "model_artifacts")
 os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -58,8 +59,10 @@ def _normalize_record_list(records: list) -> list:
             continue
         if rec.get("delayed") is None:
             continue
-        classification = str(rec.get("data_classification", "REAL")).upper()
-        if classification in {"TEST", "TEST/SYNTHETIC", "SYNTHETIC"}:
+        if rec.get("training_data_version", TRAINING_DATA_VERSION) != TRAINING_DATA_VERSION:
+            continue
+        classification = str(rec.get("data_classification", "REAL")).strip().upper()
+        if classification != "REAL":
             continue
         cleaned.append(rec)
     return cleaned
@@ -95,6 +98,9 @@ def train_model(records: list, algorithm: str = "RandomForest") -> Dict[str, Any
             "Training rejected: Minimum 10 real labeled records in a valid two-class dataset are required; current dataset has only one class and is not valid for training."
         )
 
+    if min(np.bincount(y_clf)) < 2:
+        raise InsufficientDataError("At least two real labeled records per class are required for a stratified holdout.")
+
     real_regression_records = [
         r for r in records
         if r.get(REGRESSION_LABEL) is not None and r.get(REGRESSION_LABEL) != ""
@@ -105,18 +111,20 @@ def train_model(records: list, algorithm: str = "RandomForest") -> Dict[str, Any
     logger.info(f"Training on {len(records)} samples, {len(FEATURE_COLUMNS)} features")
     logger.info(f"Class distribution: {y_clf.sum()} delayed, {(y_clf == 0).sum()} on-time")
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
     if regression_available:
         X_train, X_test, y_clf_train, y_clf_test, y_reg_train, y_reg_test = train_test_split(
-            X_scaled, y_clf, y_reg, test_size=0.2, random_state=42, stratify=y_clf if len(set(y_clf)) > 1 else None
+            X, y_clf, y_reg, test_size=0.2, random_state=42, stratify=y_clf if len(set(y_clf)) > 1 else None
         )
     else:
         X_train, X_test, y_clf_train, y_clf_test = train_test_split(
-            X_scaled, y_clf, test_size=0.2, random_state=42, stratify=y_clf if len(set(y_clf)) > 1 else None
+            X, y_clf, test_size=0.2, random_state=42, stratify=y_clf if len(set(y_clf)) > 1 else None
         )
         y_reg_train = y_reg_test = np.array([])
+
+    # Fit preprocessing only on the training split; holdout rows stay unseen.
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
 
     if algorithm == "XGBoost" and XGBOOST_AVAILABLE:
         clf = XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.1,
@@ -179,6 +187,7 @@ def train_model(records: list, algorithm: str = "RandomForest") -> Dict[str, Any
         "n_unique_classes": int(len(np.unique(y_clf))),
         "class_counts": {"0": int((y_clf == 0).sum()), "1": int((y_clf == 1).sum())},
         "real_label_source": True,
+        "training_data_version": TRAINING_DATA_VERSION,
         "regression_target_available": regression_available,
         "precision": precision,
         "recall": recall,
@@ -218,6 +227,8 @@ def load_active_model() -> Optional[Tuple[Any, Any, Any, Dict]]:
         if not isinstance(meta, dict):
             _clear_active_model_files()
             return None
+        if meta.get("training_data_version") != TRAINING_DATA_VERSION:
+            _clear_active_model_files(); return None
         if int(meta.get("n_samples", 0) or 0) < MIN_SAMPLES:
             _clear_active_model_files(); return None
         if int(meta.get("n_unique_classes", 0) or 0) < 2:

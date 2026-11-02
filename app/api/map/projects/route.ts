@@ -1,5 +1,3 @@
-import { NextResponse } from 'next/server';
+import { proxyBackend } from '../../../../lib/backend';
 
-export async function GET() {
-  return NextResponse.json({ data: [], message: 'No real project map data is available yet.' }, { status: 200 });
-}
+export const GET = proxyBackend;

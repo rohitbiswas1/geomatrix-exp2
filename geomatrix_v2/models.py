@@ -12,6 +12,16 @@ from sqlalchemy.orm import declarative_base, relationship
 Base = declarative_base()
 
 
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    token_hash = Column(String(64), primary_key=True)
+    subject = Column(String, nullable=False)
+    email = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -85,6 +95,10 @@ class HistoricalDelayRecord(Base):
     delayed             = Column(Boolean, nullable=False)   # True if delay > 0
     validation_status   = Column(String, default="pending")
     data_classification = Column(String, default="REAL")
+
+    # Version 1 imports may contain approval_pending copied from the label.
+    # Re-import original source data before those records can be used again.
+    training_data_version = Column(Integer, default=1, nullable=False)
 
     # provenance
     source_name       = Column(String)

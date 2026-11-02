@@ -47,17 +47,32 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [systemStatus, setSystemStatus] = useState<'checking' | 'operational' | 'degraded'>('checking');
   const [openAlertCount, setOpenAlertCount] = useState<number | null>(null);
 
+  const [authError, setAuthError] = useState('');
   const login = path === '/login';
 
-  // Auth check + user info
   useEffect(() => {
-    if (!login && !sessionStorage.getItem('geomatrix-auth')) {
-      router.replace('/login');
-    }
-    const auth = sessionStorage.getItem('geomatrix-auth');
-    if (auth) {
-      try { setUserInfo(JSON.parse(auth)); } catch { /* ignore */ }
-    }
+    if (login) { setUserInfo(null); return; }
+    let active = true;
+    const controller = new AbortController();
+    const verify = async () => {
+      try {
+        const response = await fetch('/api/auth/me', { cache: 'no-store', signal: controller.signal });
+        if (!active) return;
+        if (response.status === 401) {
+          setUserInfo(null);
+          router.replace('/login');
+          return;
+        }
+        if (!response.ok) throw new Error('Sign-in service is unavailable. Please reload to retry.');
+        const data = await response.json();
+        if (active) { setUserInfo(data.user); setAuthError(''); }
+      } catch (error) {
+        if (active) { setUserInfo(null); setAuthError(error instanceof Error ? error.message : 'Could not verify sign-in.'); }
+      }
+    };
+    void verify();
+    const timer = window.setInterval(verify, 60000);
+    return () => { active = false; controller.abort(); window.clearInterval(timer); };
   }, [login, router]);
 
   useEffect(() => {
@@ -68,7 +83,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    const apiBase = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+    if (login || !userInfo) return;
+    const apiBase = '';
     Promise.all([
       fetch(`${apiBase}/api/projects/dashboard-summary`, { cache: 'no-store' }),
       fetch(`${apiBase}/api/alerts/summary`, { cache: 'no-store' }),
@@ -86,7 +102,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         if (active) setSystemStatus('degraded');
       });
     return () => { active = false; };
-  }, []);
+  }, [login, userInfo]);
 
   // Theme synchronization - default to light
   useEffect(() => {
@@ -114,9 +130,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   if (login) return <>{children}</>;
 
-  const logout = () => {
-    sessionStorage.removeItem('geomatrix-auth');
-    router.replace('/login');
+  if (!userInfo) return <main role="status">{authError || 'Checking sign-in…'}</main>;
+
+  const logout = async () => {
+    try {
+      const response = await fetch('/api/auth/logout', { method: 'POST' });
+      if (!response.ok) throw new Error('Sign-out failed. Please try again.');
+      setUserInfo(null);
+      router.replace('/login');
+    } catch {
+      setAuthError('Sign-out failed. Please try again.');
+    }
   };
 
   const nav = [
@@ -169,14 +193,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <div className="sidebottom">
           <div className="userline">
             <div>
-              <b style={{ fontSize: 13 }}>{userInfo?.role || 'Administrator'}</b>
-              <div className="role">{userInfo?.email || 'Prototype account'}</div>
+              <b style={{ fontSize: 13 }}>{userInfo.role || 'Project Officer'}</b>
+              <div className="role">{userInfo.email}</div>
             </div>
             <ShieldCheck size={16} color="#60a5fa" />
           </div>
           <button className="btn sidebar-logout" onClick={logout}>
             <LogOut size={13} /> Logout
           </button>
+          {authError && <p role="alert">{authError}</p>}
         </div>
       </aside>
 

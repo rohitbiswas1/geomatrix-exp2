@@ -1,6 +1,8 @@
 import csv
 import io
 import json
+import pytest
+from security import require_session
 
 from fastapi.testclient import TestClient
 
@@ -243,4 +245,81 @@ def test_user_mospi_flash_report_csv_ingestion_and_training(tmp_path, monkeypatc
     assert pred_resp.status_code == 200
     pred = pred_resp.json()["prediction"]
     assert pred["status"] == "ok"
-    assert 0.0 <= pred["delay_probability"] <= 1.0
+    assert 0.0 <= pred["delay_probability"] <= 1.0
+
+
+@pytest.fixture(autouse=True)
+def authenticated_pipeline():
+    # Pipeline tests isolate ingestion/ML behavior; auth is tested separately.
+    app.dependency_overrides[require_session] = lambda: object()
+    yield
+    app.dependency_overrides.pop(require_session, None)
+
+
+def test_missing_approval_is_not_derived_from_delay_label():
+    from database import SessionLocal
+    from models import HistoricalDelayRecord
+    rows = [_historical_row(0), _historical_row(1)]
+    for row in rows:
+        del row['approval_pending']
+    response = TestClient(app).post('/api/ingest/upload?data_type=historical',
+        files={'file': ('real-history.csv', _csv_bytes(rows), 'text/csv')})
+    assert response.json()['records_saved'] == 2
+    with SessionLocal() as db:
+        records = db.query(HistoricalDelayRecord).all()
+        assert {r.delayed for r in records} == {True, False}
+        assert all(r.approval_pending is None for r in records)
+
+
+def test_api_training_excludes_synthetic_and_legacy_records(monkeypatch):
+    from database import SessionLocal
+    from models import HistoricalDelayRecord
+    with SessionLocal() as db:
+        for index, (classification, version) in enumerate([('REAL', 2), ('TEST', 2), ('SYNTHETIC', 2), ('REAL', 1)]):
+            db.add(HistoricalDelayRecord(id=str(index), project_code=f'P{index}', delayed=True,
+                actual_delay_days=1, data_classification=classification, training_data_version=version))
+        db.commit()
+    captured = []
+    def capture(records, **kwargs):
+        captured.extend(records)
+        raise train_module.InsufficientDataError('Too few eligible records')
+    monkeypatch.setattr('routers.ml.train_model', capture)
+    client = TestClient(app)
+    summary = client.get('/api/model/training-data').json()
+    assert summary['total_records'] == 1
+    assert summary['excluded_records'] == 3
+    assert summary['ready_to_train'] is False
+    assert client.post('/api/model/train').status_code == 400
+    assert len(captured) == 1
+    assert captured[0]['data_classification'] == 'REAL'
+    assert captured[0]['training_data_version'] == 2
+
+
+def test_historical_reimport_repairs_legacy_row_without_copying_label():
+    from database import SessionLocal
+    from models import HistoricalDelayRecord
+    with SessionLocal() as db:
+        db.add(HistoricalDelayRecord(id='legacy', source_record_id='history-source-1',
+            delayed=True, actual_delay_days=4, approval_pending=True, training_data_version=1))
+        db.commit()
+    row = _historical_row(1)
+    del row['approval_pending']
+    response = TestClient(app).post('/api/ingest/upload?data_type=historical',
+        files={'file': ('real-history.csv', _csv_bytes([row]), 'text/csv')})
+    assert response.json()['records_saved'] == 1
+    with SessionLocal() as db:
+        record = db.query(HistoricalDelayRecord).one()
+        assert record.training_data_version == 2
+        assert record.approval_pending is None
+
+
+def test_explicit_synthetic_classification_survives_ingestion():
+    from database import SessionLocal
+    from models import HistoricalDelayRecord
+    row = _historical_row(1)
+    row['data_classification'] = 'SYNTHETIC'
+    response = TestClient(app).post('/api/ingest/upload?data_type=historical',
+        files={'file': ('history.csv', _csv_bytes([row]), 'text/csv')})
+    assert response.json()['records_saved'] == 1
+    with SessionLocal() as db:
+        assert db.query(HistoricalDelayRecord).one().data_classification == 'SYNTHETIC'
