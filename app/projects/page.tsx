@@ -1,12 +1,15 @@
 'use client';
 
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { Plus, Upload, Map as MapIcon, Search, ArrowUpDown, Filter, TrendingUp, TrendingDown, Minus, X, CheckCircle2, AlertCircle, RefreshCw, Trash2 } from 'lucide-react';
-import { fetchProjects, createProject, uploadFile, deleteProject, ApiProject, ApiError } from '../../lib/apiClient';
+import { fetchProjects, createProject, uploadFile, deleteProject, ApiProject, ApiError, type IngestResult } from '../../lib/apiClient';
 import { riskLevel } from '../../lib/data';
 import ExportDropdown, { ExportFormat } from '../../components/ExportDropdown';
 import { exportToCSV, exportToExcel, exportToPDF } from '../../lib/exportUtils';
+
+import UploadSummary from '../../components/UploadSummary';
+import { UPLOAD_ACCEPT } from '../../lib/uploads';
 
 type SortKey = 'risk_score' | 'delay_probability' | 'name' | 'project_code';
 type SortDir = 'asc' | 'desc';
@@ -46,6 +49,8 @@ export default function Projects() {
   const [toast, setToast] = useState('');
   const [csvError, setCsvError] = useState('');
   const [csvUploading, setCsvUploading] = useState(false);
+  const [csvResult, setCsvResult] = useState<IngestResult | null>(null);
+  const csvInFlight = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,20 +73,24 @@ export default function Projects() {
   }
 
   async function handleCsvUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setCsvError('');
-    setCsvUploading(true);
+    const input = e.currentTarget;
+    const file = input.files?.[0];
+    if (!file || csvInFlight.current) return;
+    csvInFlight.current = true;
+    setCsvError(''); setCsvResult(null); setCsvUploading(true);
     try {
       const result = await uploadFile(file, 'projects');
-      showToast(`Imported ${result.records_saved} rows from ${file.name}`);
-      await load();
+      setCsvResult(result);
+      if (result.records_saved > 0) {
+        showToast(`Imported ${result.records_saved} project${result.records_saved === 1 ? '' : 's'}`);
+        setSearch(''); setRiskFilter('All'); setStateFilter('All'); setStageFilter('All');
+        setCompensationFilter('All'); setLegalFilter('All');
+        await load();
+      }
     } catch (error) {
-      setCsvError(error instanceof Error ? error.message : 'CSV upload failed');
+      setCsvError(error instanceof Error ? error.message : 'Upload failed. Please try again.');
     } finally {
-      setCsvUploading(false);
-      e.target.value = '';
+      setCsvUploading(false); csvInFlight.current = false; input.value = '';
     }
   }
 
@@ -277,18 +286,21 @@ export default function Projects() {
         </div>
         <div className="actions">
           <label className="btn" style={{ cursor: 'pointer' }}>
-            <Upload size={13} /> {csvUploading ? 'Uploading…' : 'Upload CSV'}
-            <input type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }} onChange={handleCsvUpload} />
+            <Upload size={13} /> {csvUploading ? 'Uploading…' : 'Upload CSV / JSON'}
+            <input aria-label="Upload project records" type="file" accept={UPLOAD_ACCEPT} disabled={csvUploading} style={{ display: 'none' }} onChange={handleCsvUpload} />
           </label>
+          <a className="btn" href="/templates/project-records.csv" download>CSV template</a>
           <ExportDropdown label="Export" onExport={handleExport} />
           <button className="btn" onClick={() => setShowAddModal(true)}><Plus size={13} /> Add Project</button>
           <Link className="btn primary" href="/map"><MapIcon size={13} /> View GIS Map</Link>
         </div>
       </div>
 
+      {csvResult && <div className="panel" style={{ marginBottom: 16 }}><UploadSummary result={csvResult} /></div>}
+      <p className="muted" style={{ marginBottom: 14, fontSize: 12 }}>CSV or JSON · up to 4 MB / 5,000 records. Required: project_code (or project_id), name (or project_name), state.</p>
       {csvError && (
         <div style={{ padding: '10px 14px', background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 6, marginBottom: 16, color: 'var(--red-text)', fontSize: 13, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <AlertCircle size={14} /> {csvError}
+          <AlertCircle size={14} /><span role="alert">{csvError}</span>
         </div>
       )}
 

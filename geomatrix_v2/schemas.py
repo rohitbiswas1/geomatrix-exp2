@@ -183,6 +183,9 @@ class TrainResponse(BaseModel):
 # ── Ingestion ─────────────────────────────────────────────────────────────────
 
 class IngestResult(BaseModel):
+    records_duplicated: int = 0
+    records_failed: int = 0
+    warnings: List[str] = Field(default_factory=list)
     source: str
     records_fetched: int
     records_saved: int

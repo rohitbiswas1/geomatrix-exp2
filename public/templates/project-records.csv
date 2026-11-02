@@ -1,0 +1,2 @@
+project_code,name,state,district,authority,project_type,latitude,longitude,land_required,land_acquired,affected_families,current_stage,status,data_classification
+EXAMPLE-001,Example corridor,West Bengal,Kolkata,Example agency,Highway,22.5726,88.3639,10,2,5,Notification,Active,TEST
