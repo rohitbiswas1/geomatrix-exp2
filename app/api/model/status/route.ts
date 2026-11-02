@@ -1,3 +1,4 @@
+import { checkOrigin, requireBackendSession } from '../../../../lib/backend';
 import { NextResponse } from 'next/server';
 
 function backendUrl() {
@@ -5,6 +6,8 @@ function backendUrl() {
 }
 
 export async function GET() {
+  const authError = await requireBackendSession(); if (authError) return authError;
+
   try {
     const response = await fetch(`${backendUrl()}/api/model/status`, { cache: 'no-store' });
     const payload = await response.json();

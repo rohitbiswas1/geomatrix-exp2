@@ -1,8 +1,9 @@
 import os
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
+from security import require_session
 from routers.alerts import router as alerts_router
 from routers.auth import router as auth_router
 from routers.gemini import router as gemini_router
@@ -30,12 +31,9 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
-app.include_router(gemini_router)
-app.include_router(projects_router)
-app.include_router(alerts_router)
-app.include_router(ingest_router)
-app.include_router(map_router)
-app.include_router(ml_router)
+for protected_router in (gemini_router, projects_router, alerts_router, ingest_router, map_router, ml_router):
+    app.include_router(protected_router, dependencies=[Depends(require_session)])
+
 
 init_db()
 

@@ -1,8 +1,11 @@
+import { checkOrigin, requireBackendSession } from '../../../lib/backend';
 import { NextResponse } from 'next/server';
 import { demoProjects } from '../_demo-data';
 import { getImportedProjects } from '../../../lib/importedProjects';
 
 export async function GET(request: Request) {
+  const authError = await requireBackendSession(); if (authError) return authError;
+
   const { searchParams } = new URL(request.url);
   let list = [...demoProjects, ...getImportedProjects()];
 
@@ -30,6 +33,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const originError = checkOrigin(request); if (originError) return originError;
+const authError = await requireBackendSession(); if (authError) return authError;
+
   const body = await request.json();
   const project = {
     id: body.id || `proj-${Date.now()}`,

@@ -1,3 +1,4 @@
+import { checkOrigin, requireBackendSession } from '../../../../../lib/backend';
 import { NextResponse } from 'next/server';
 import { demoProjects } from '../../../_demo-data';
 
@@ -53,6 +54,8 @@ function computePrediction(project: (typeof demoProjects)[number]) {
 }
 
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const authError = await requireBackendSession(); if (authError) return authError;
+
   const { id } = await params;
   const project = demoProjects.find((item) => item.id === id || item.project_code === id);
 
@@ -65,6 +68,9 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
 }
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const originError = checkOrigin(_); if (originError) return originError;
+const authError = await requireBackendSession(); if (authError) return authError;
+
   const { id } = await params;
   const projectIndex = demoProjects.findIndex((item) => item.id === id || item.project_code === id);
 

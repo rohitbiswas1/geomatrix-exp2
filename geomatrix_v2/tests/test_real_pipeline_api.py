@@ -1,6 +1,8 @@
 import csv
 import io
 import json
+import pytest
+from security import require_session
 
 from fastapi.testclient import TestClient
 
@@ -243,4 +245,12 @@ def test_user_mospi_flash_report_csv_ingestion_and_training(tmp_path, monkeypatc
     assert pred_resp.status_code == 200
     pred = pred_resp.json()["prediction"]
     assert pred["status"] == "ok"
-    assert 0.0 <= pred["delay_probability"] <= 1.0
+    assert 0.0 <= pred["delay_probability"] <= 1.0
+
+
+@pytest.fixture(autouse=True)
+def authenticated_pipeline():
+    # Pipeline tests isolate ingestion/ML behavior; auth is tested separately.
+    app.dependency_overrides[require_session] = lambda: object()
+    yield
+    app.dependency_overrides.pop(require_session, None)

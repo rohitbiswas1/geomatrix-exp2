@@ -1,3 +1,4 @@
+import { checkOrigin, requireBackendSession } from '../../../../lib/backend';
 import { NextResponse } from 'next/server';
 import { addImportedProjects, ImportedProjectRecord } from '../../../../lib/importedProjects';
 
@@ -127,6 +128,9 @@ function jsonQuality(text: string): { records: number; missingFields: number; co
 }
 
 export async function POST(request: Request) {
+  const originError = checkOrigin(request); if (originError) return originError;
+const authError = await requireBackendSession(); if (authError) return authError;
+
   const form = await request.formData();
   const file = form.get('file');
   const dataType = form.get('data_type') === 'historical' ? 'historical' : 'projects';
@@ -198,5 +202,7 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
+  const authError = await requireBackendSession(); if (authError) return authError;
+
   return NextResponse.json(ingestionLogs.slice(0, 20));
 }

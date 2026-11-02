@@ -1,3 +1,4 @@
+import { checkOrigin, requireBackendSession } from '../../../../lib/backend';
 import { NextResponse } from 'next/server';
 
 function backendUrl() {
@@ -5,6 +6,9 @@ function backendUrl() {
 }
 
 export async function POST(request: Request) {
+  const originError = checkOrigin(request); if (originError) return originError;
+const authError = await requireBackendSession(); if (authError) return authError;
+
   const { searchParams } = new URL(request.url);
   const algorithm = searchParams.get('algorithm') || 'RandomForest';
 

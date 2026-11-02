@@ -5,19 +5,22 @@
  * All functions here are the real-data replacements for lib/data.ts exports.
  */
 
-const BASE = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+// Keep the HttpOnly session on the application origin.
+const BASE = '';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    cache: 'no-store',
   });
   if (!res.ok) {
     const body = await res.text();
     let message = body;
-    try { message = (JSON.parse(body) as { error?: string }).error || body; } catch { /* preserve non-JSON API errors */ }
+    try { message = (JSON.parse(body) as { error?: string; detail?: string }).error || (JSON.parse(body) as { detail?: string }).detail || body; } catch { /* preserve non-JSON API errors */ }
     throw new ApiError(res.status, message);
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -255,7 +258,7 @@ export async function updateProject(id: string, data: Partial<ProjectCreatePaylo
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  await fetch(`${BASE}/api/projects/${id}`, { method: 'DELETE' });
+  await apiFetch<void>(`/api/projects/${id}`, { method: 'DELETE' });
 }
 
 export async function validateProject(id: string): Promise<ProjectValidation> {
@@ -305,7 +308,7 @@ export async function uploadFile(file: File, dataType: 'projects' | 'historical'
   if (!res.ok) {
     const body = await res.text();
     let message = body;
-    try { message = (JSON.parse(body) as { error?: string }).error || body; } catch { /* preserve non-JSON API errors */ }
+    try { message = (JSON.parse(body) as { error?: string; detail?: string }).error || (JSON.parse(body) as { detail?: string }).detail || body; } catch { /* preserve non-JSON API errors */ }
     throw new ApiError(res.status, message);
   }
   return res.json() as Promise<IngestResult>;
@@ -345,7 +348,7 @@ export async function explainWithGemini(payload: {
   if (!res.ok) {
     const body = await res.text();
     let message = body;
-    try { message = (JSON.parse(body) as { error?: string }).error || body; } catch { /* preserve non-JSON API errors */ }
+    try { message = (JSON.parse(body) as { error?: string; detail?: string }).error || (JSON.parse(body) as { detail?: string }).detail || body; } catch { /* preserve non-JSON API errors */ }
     throw new ApiError(res.status, message);
   }
   return res.json();

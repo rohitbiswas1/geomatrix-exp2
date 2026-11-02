@@ -81,16 +81,7 @@ export default function Login() {
                 if (!response.ok) throw new Error((await response.json()).error || 'Google sign-in failed.');
                 return response.json();
               })
-              .then((user) => {
-                sessionStorage.setItem(
-                  'geomatrix-auth',
-                  JSON.stringify({
-                    provider: 'google',
-                    email: user.email,
-                    name: user.name,
-                    signedInAt: new Date().toISOString(),
-                  })
-                );
+              .then(() => {
                 router.push('/dashboard');
               })
               .catch((googleError: Error) => {

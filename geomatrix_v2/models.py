@@ -12,6 +12,16 @@ from sqlalchemy.orm import declarative_base, relationship
 Base = declarative_base()
 
 
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    token_hash = Column(String(64), primary_key=True)
+    subject = Column(String, nullable=False)
+    email = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+
 class Project(Base):
     __tablename__ = "projects"
 

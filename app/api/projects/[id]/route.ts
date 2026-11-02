@@ -1,7 +1,10 @@
+import { checkOrigin, requireBackendSession } from '../../../../lib/backend';
 import { NextResponse } from 'next/server';
 import { demoProjects } from '../../_demo-data';
 
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const authError = await requireBackendSession(); if (authError) return authError;
+
   const { id } = await params;
   const project = demoProjects.find((item) => item.id === id || item.project_code === id);
 
@@ -13,6 +16,9 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const originError = checkOrigin(request); if (originError) return originError;
+const authError = await requireBackendSession(); if (authError) return authError;
+
   const { id } = await params;
   const payload = await request.json();
   const index = demoProjects.findIndex((item) => item.id === id || item.project_code === id);
@@ -27,6 +33,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const originError = checkOrigin(_); if (originError) return originError;
+const authError = await requireBackendSession(); if (authError) return authError;
+
   const { id } = await params;
   const index = demoProjects.findIndex((item) => item.id === id || item.project_code === id);
 

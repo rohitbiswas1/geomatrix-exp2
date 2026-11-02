@@ -1,6 +1,9 @@
+import { checkOrigin, requireBackendSession } from '../../../lib/backend';
 import { NextResponse } from 'next/server';
 
 export async function POST() {
+  const authError = await requireBackendSession(); if (authError) return authError;
+
   return NextResponse.json(
     {
       error: 'Model not trained — insufficient real labeled data.',
@@ -11,6 +14,8 @@ export async function POST() {
 }
 
 export async function GET() {
+  const authError = await requireBackendSession(); if (authError) return authError;
+
   return NextResponse.json(
     {
       error: 'Model not trained — insufficient real labeled data.',
