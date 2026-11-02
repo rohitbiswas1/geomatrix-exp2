@@ -78,7 +78,7 @@ export async function proxyBackend(request: Request): Promise<Response> {
     if (contentType) headers.set('Content-Type', contentType);
     const upstream = await fetch(backendUrl(`${url.pathname}${url.search}`), {
       method: request.method, headers, body, cache: 'no-store', redirect: 'error',
-      signal: AbortSignal.timeout(url.pathname === '/api/model/train' ? 120000 : 30000),
+      signal: AbortSignal.timeout(url.pathname === '/api/model/train' ? 120000 : url.pathname === '/api/auth/me' ? 70000 : 30000),
     });
     return new Response(upstream.body, {
       status: upstream.status,

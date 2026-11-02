@@ -1,21 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ShieldCheck, Map, Sun, Moon, Laptop, Loader2 } from 'lucide-react';
 
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize: (options: { client_id: string; callback: (response: { credential: string }) => void }) => void;
-          renderButton: (element: HTMLElement, options: { theme: string; size: string; width: number; text: string }) => void;
-        };
-      };
-    };
-  }
-}
+import { loadGoogleIdentity } from '../../lib/googleIdentity';
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -25,103 +14,128 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
   const [effectiveTheme, setEffectiveTheme] = useState<'light' | 'dark'>('dark');
-  const [hasMounted, setHasMounted] = useState(false);
+  const [sessionState, setSessionState] = useState<'checking' | 'signed-out' | 'redirecting'>('checking');
+  const [sdkState, setSdkState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [retry, setRetry] = useState(0);
+  const [notice, setNotice] = useState('');
+  const [slowSignIn, setSlowSignIn] = useState(false);
   const googleButton = useRef<HTMLDivElement>(null);
   const googleInitRef = useRef(false);
+  const inFlight = useRef(false);
+  const active = useRef(true);
+  const signInRequest = useRef<AbortController | null>(null);
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim();
-  const isGoogleAuthReady =
-    hasMounted &&
-    Boolean(googleClientId) &&
-    process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === 'true';
+  const isGoogleAuthReady = Boolean(googleClientId) && process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === 'true';
 
-  // Theme resolution
   useEffect(() => {
-    setHasMounted(true);
+    active.current = true;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 75000);
+    fetch('/api/auth/me', { cache: 'no-store', signal: controller.signal })
+      .then(async (response) => {
+        if (!active.current) return;
+        if (response.ok && (await response.json()).user) {
+          setSessionState('redirecting');
+          router.replace('/dashboard');
+        } else {
+          setSessionState('signed-out');
+        }
+      })
+      .catch(() => { if (active.current) setSessionState('signed-out'); })
+      .finally(() => window.clearTimeout(timer));
+    return () => { active.current = false; controller.abort(); signInRequest.current?.abort(); window.clearTimeout(timer); };
+  }, [router]);
 
-    const savedTheme = localStorage.getItem('geomatrix-theme') as ThemeMode | null;
-    if (savedTheme) {
-      setThemeMode(savedTheme);
-    }
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('geomatrix-theme');
+      if (saved === 'light' || saved === 'dark' || saved === 'system') setThemeMode(saved);
+    } catch { /* The system theme works when browser storage is unavailable. */ }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('geomatrix-theme', themeMode);
-    
-    if (themeMode === 'system') {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      setEffectiveTheme(mediaQuery.matches ? 'dark' : 'light');
-
-      const handler = (e: MediaQueryListEvent) => {
-        setEffectiveTheme(e.matches ? 'dark' : 'light');
-      };
-      mediaQuery.addEventListener('change', handler);
-      return () => mediaQuery.removeEventListener('change', handler);
-    } else {
-      setEffectiveTheme(themeMode);
-    }
+    try { localStorage.setItem('geomatrix-theme', themeMode); } catch { /* Theme remains usable. */ }
+    if (themeMode !== 'system') { setEffectiveTheme(themeMode); return; }
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const update = () => setEffectiveTheme(media.matches ? 'dark' : 'light');
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
   }, [themeMode]);
 
+  const handleCredential = useCallback(async ({ credential }: { credential: string }) => {
+    if (!active.current || inFlight.current) return;
+    inFlight.current = true;
+    setIsLoading(true);
+    setError('');
+    setNotice('');
+    setSlowSignIn(false);
+    const controller = new AbortController();
+    signInRequest.current = controller;
+    const slowTimer = window.setTimeout(() => { if (active.current) setSlowSignIn(true); }, 7000);
+    const timeout = window.setTimeout(() => controller.abort(), 75000);
+    try {
+      const response = await fetch('/api/auth/google', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential }), signal: controller.signal,
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || 'Sign-in could not be completed. Please try again.');
+      if (!active.current) return;
+      setSessionState('redirecting');
+      router.replace('/dashboard');
+      router.refresh();
+    } catch (signInError) {
+      if (active.current) {
+        setError(controller.signal.aborted ? 'Sign-in took too long. Please try again.' :
+          signInError instanceof Error ? signInError.message : 'Sign-in could not be completed. Please try again.');
+        setIsLoading(false);
+        setSlowSignIn(false);
+      }
+    } finally {
+      window.clearTimeout(slowTimer);
+      window.clearTimeout(timeout);
+      inFlight.current = false;
+      signInRequest.current = null;
+    }
+  }, [router]);
+
   useEffect(() => {
-    if (!isGoogleAuthReady || !googleButton.current) return;
-
-    const renderGoogleButton = () => {
-      if (!window.google || !googleButton.current) return;
-
+    if (!isGoogleAuthReady || sessionState !== 'signed-out') return;
+    let disposed = false;
+    let observer: ResizeObserver | undefined;
+    setSdkState('loading');
+    loadGoogleIdentity().then((google) => {
+      if (disposed || !googleButton.current) return;
       if (!googleInitRef.current) {
-        window.google.accounts.id.initialize({
-          client_id: googleClientId || '',
-          callback: ({ credential }) => {
-            setIsLoading(true);
-            fetch('/api/auth/google', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ credential }),
-            })
-              .then(async (response) => {
-                if (!response.ok) throw new Error((await response.json()).error || 'Google sign-in failed.');
-                return response.json();
-              })
-              .then(() => {
-                router.push('/dashboard');
-              })
-              .catch((googleError: Error) => {
-                setError(googleError.message);
-                setIsLoading(false);
-              });
-          },
-        });
+        google.accounts.id.initialize({ client_id: googleClientId || '', callback: handleCredential });
         googleInitRef.current = true;
       }
-
-      googleButton.current.replaceChildren();
-      window.google.accounts.id.renderButton(googleButton.current, {
-        theme: effectiveTheme === 'dark' ? 'filled_blue' : 'outline',
-        size: 'large',
-        width: 376,
-        text: 'continue_with',
-      });
-    };
-
-    if (window.google) {
-      renderGoogleButton();
-      return;
-    }
-
-    const existingScript = document.querySelector('script[data-geomatrix-google-gsi="true"]') as HTMLScriptElement | null;
-    if (existingScript) {
-      existingScript.addEventListener('load', renderGoogleButton, { once: true });
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.dataset.geomatrixGoogleGsi = 'true';
-    script.onload = renderGoogleButton;
-    script.onerror = () => setError('Google sign-in script failed to load.');
-    document.head.appendChild(script);
-  }, [isGoogleAuthReady, googleClientId, router, effectiveTheme]);
+      let lastWidth = 0;
+      const draw = () => {
+        const element = googleButton.current;
+        if (disposed || !element) return;
+        const width = Math.max(200, Math.min(400, Math.floor(element.clientWidth)));
+        if (width === lastWidth) return;
+        lastWidth = width;
+        element.replaceChildren();
+        google.accounts.id.renderButton(element, {
+          theme: effectiveTheme === 'dark' ? 'filled_blue' : 'outline',
+          size: 'large', width, text: 'continue_with',
+          click_listener: () => { setError(''); setNotice('Choose your Google account to continue.'); },
+        });
+      };
+      draw();
+      observer = new ResizeObserver(draw);
+      observer.observe(googleButton.current);
+      setSdkState('ready');
+    }).catch((sdkError: unknown) => {
+      if (disposed) return;
+      setSdkState('error');
+      setError(sdkError instanceof Error ? sdkError.message : 'Google sign-in could not load. Please try again.');
+    });
+    return () => { disposed = true; observer?.disconnect(); };
+  }, [isGoogleAuthReady, sessionState, googleClientId, effectiveTheme, handleCredential, retry]);
 
   return (
     <div className={`login-page-wrapper theme-${effectiveTheme}`} data-theme={effectiveTheme}>
@@ -164,6 +178,7 @@ export default function Login() {
           flex-direction: column;
           font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
           color: var(--text-main);
+          box-sizing: border-box;
           overflow-x: hidden;
           background: #051930 url('/geomatrix-landscape.png') center / cover no-repeat fixed;
         }
@@ -201,6 +216,8 @@ export default function Login() {
                       linear-gradient(180deg, rgba(5, 18, 38, 0.55) 0%, rgba(5, 18, 38, 0.88) 100%);
           pointer-events: none;
         }
+
+        .login-page-wrapper *, .login-page-wrapper *::before, .login-page-wrapper *::after { box-sizing: border-box; }
 
         /* Top Navigation / Brand Header */
         .login-header-bar {
@@ -591,11 +608,32 @@ export default function Login() {
 
         /* Google Login Button */
         .google-button-wrapper {
+          position: relative;
           width: 100%;
           min-height: 44px;
           display: flex;
           justify-content: center;
         }
+
+        .google-button {
+          width: 100%;
+          min-width: 0;
+          min-height: 44px;
+        }
+
+        .sign-in-loading {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          font-size: 13px;
+          color: var(--text-main);
+        }
+
+        .sign-in-unavailable { position: absolute; margin: 0; font-size: 12px; text-align: center; }
+        .sign-in-notice { min-height: 18px; margin: 12px 0 0; font-size: 12px; line-height: 1.5; text-align: center; color: var(--text-muted); }
 
         .google-fallback-btn {
           width: 100%;
@@ -756,7 +794,7 @@ export default function Login() {
         <div className="glass-card">
           <div className="card-header">
             <h2>Command Center Sign In</h2>
-            <p>Access the prototype decision support system</p>
+            <p>Sign in with your Google account to continue.</p>
           </div>
 
           {error && (
@@ -765,30 +803,31 @@ export default function Login() {
             </div>
           )}
 
-          <div className="google-button-wrapper">
-            {isGoogleAuthReady ? (
-              <div ref={googleButton} className="google-button" />
-            ) : (
-              <button
-                type="button"
-                className="google-fallback-btn"
-                onClick={() => setError('Google sign-in is not configured for this host. Add a valid NEXT_PUBLIC_GOOGLE_CLIENT_ID and allow the current origin in Google Cloud.')}
-                disabled={isLoading}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                </svg>
-                <span>Continue with Google</span>
-              </button>
+          <div className="google-button-wrapper" aria-busy={sessionState !== 'signed-out' || isLoading || (isGoogleAuthReady && sdkState === 'loading')}>
+            <div ref={googleButton} className="google-button"
+              style={{ visibility: sessionState === 'signed-out' && sdkState === 'ready' && !isLoading ? 'visible' : 'hidden' }} />
+            {(sessionState !== 'signed-out' || isLoading || (isGoogleAuthReady && sdkState === 'loading')) && (
+              <div className="sign-in-loading" role="status">
+                <Loader2 size={18} className="spinner" aria-hidden="true" />
+                <span>{sessionState === 'checking' ? 'Checking your session…' : sessionState === 'redirecting' ? 'Opening your dashboard…' : isLoading ? 'Signing you in…' : 'Loading Google sign-in…'}</span>
+              </div>
+            )}
+            {sessionState === 'signed-out' && !isGoogleAuthReady && (
+              <p className="sign-in-unavailable" role="status">Google sign-in is currently unavailable. Please contact the administrator.</p>
             )}
           </div>
+          {sdkState === 'error' && (
+            <button type="button" className="google-fallback-btn" onClick={() => { setError(''); setSdkState('loading'); setRetry((value) => value + 1); }}>
+              Retry Google sign-in
+            </button>
+          )}
+          <p className="sign-in-notice" role="status" aria-live="polite">
+            {slowSignIn ? 'The sign-in service is starting. This may take up to a minute.' : notice}
+          </p>
 
           <div className="card-footer">
             <ShieldCheck size={14} style={{ color: '#10b981' }} />
-            <span>Prototype Authentication Only</span>
+            <span>Secure Google sign-in</span>
           </div>
         </div>
       </main>
