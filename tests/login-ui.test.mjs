@@ -191,3 +191,23 @@ test('email sign-in shows backend error and can retry successfully', async () =>
     assert.equal(state.posts, 2);
   } finally { await context.close(); }
 });
+
+
+for (const action of ['login', 'register']) {
+  test(`${action} handles an object error without displaying [object Object]`, async () => {
+    const { context, page } = await setup({ signIn: async route => route.fulfill({ status: 401, json: { error: { message: 'Please renew your preview access.' } } }) });
+    try {
+      if (action === 'register') {
+        await page.getByRole('button', { name: 'Create account', exact: true }).click();
+        await page.getByLabel('Full name', { exact: true }).fill('Test Officer');
+        await page.getByLabel('Confirm password', { exact: true }).fill('A long test password!');
+      }
+      await page.getByLabel('Email address', { exact: false }).fill('officer@example.com');
+      await page.getByLabel('Password', { exact: true }).fill('A long test password!');
+      await page.locator('button[type="submit"]').click();
+      await visible(page.getByText('Please renew your preview access.', { exact: true }));
+      assert.equal(await page.getByText('[object Object]', { exact: true }).count(), 0);
+      assert.equal(await page.locator('button[type="submit"]').isEnabled(), true);
+    } finally { await context.close(); }
+  });
+}

@@ -193,3 +193,23 @@ test('password auth preserves errors and never saves a cookie on failure', async
   assert.equal((await response.json()).error, 'Too many attempts.');
   assert.equal(jar.size, 0);
 });
+
+
+test('structured authentication errors stay readable and never echo validation inputs', async () => {
+  const { authErrorMessage } = await import('../lib/authErrors.ts');
+  assert.equal(authErrorMessage({ error: { message: 'Please reopen this preview.' } }, 'Try again.'), 'Please reopen this preview.');
+  assert.equal(authErrorMessage({ error: { code: 'AUTHENTICATION_REQUIRED', message: 'object' } }, 'Try again.'),
+    'This preview needs renewed access. Reopen the preview link or use the live site.');
+  for (const payload of [{ error: {} }, { detail: [{ msg: 'Too short', input: 'private-password' }] }, null, { error: '[object Object]' }]) {
+    assert.equal(authErrorMessage(payload, 'Check your details.'), 'Check your details.');
+  }
+});
+
+test('unavailable registration endpoint explains the deployment problem', async () => {
+  const { passwordAuth } = await import('../lib/passwordAuth.ts');
+  mock.method(globalThis, 'fetch', async () => Response.json({ detail: 'Not Found' }, { status: 404 }));
+  const response = await passwordAuth(request('/api/auth/register', { method: 'POST', body: JSON.stringify({ email: 'a@b.com', password: 'A long test passphrase', name: 'Test' }) }), 'register');
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, 'Account creation is not active on this deployment yet. Please use Google sign-in.');
+  assert.equal(jar.size, 0);
+});

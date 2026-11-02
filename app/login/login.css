@@ -15,3 +15,16 @@
 
 .google-button-wrapper>.auth-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;margin:0}
 @media(max-width:760px){.auth-field input{font-size:16px}}
+
+/* Keep the landscape visible around the form at desktop and mobile widths. */
+.auth-panel{background:linear-gradient(140deg,rgba(229,240,250,.72),rgba(241,247,252,.63)),url('/geomatrix-landscape.png') center/cover no-repeat;background-attachment:fixed}
+.theme-dark .auth-panel{background-image:linear-gradient(140deg,rgba(6,20,37,.80),rgba(9,28,48,.68)),url('/geomatrix-landscape.png')}
+.auth-form-card{max-width:456px;padding:28px;background:rgba(255,255,255,.91);border:1px solid rgba(255,255,255,.7);border-radius:21px;box-shadow:0 20px 65px rgba(12,35,63,.13);backdrop-filter:blur(18px)}
+.theme-dark .auth-form-card{background:rgba(12,25,43,.92);border-color:rgba(149,184,222,.2);box-shadow:0 20px 65px #0003}
+.auth-theme{background:var(--auth-card)}
+.auth-google-link{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:12px;color:var(--auth-text);background:var(--auth-card);border:1px solid var(--auth-border);border-radius:8px;text-decoration:none;font-size:13px;font-weight:550}
+.auth-google-link:hover{border-color:var(--auth-blue)}
+.auth-google-letter{font-size:19px;font-weight:750;color:#4285f4}
+.auth-preview-note{text-align:center;margin-top:9px}
+@media(max-width:760px){.auth-main{padding:20px 20px 30px}.auth-form-card{padding:26px 24px}.auth-panel{background-attachment:scroll}.auth-panel-header{padding:18px 22px}}
+@media(max-width:360px){.auth-main{padding:12px 14px 25px}.auth-form-card{padding:23px 18px;border-radius:17px}.auth-heading h2{font-size:27px}.auth-kicker{font-size:8px;letter-spacing:1.5px}.auth-field label span{font-size:9px}}

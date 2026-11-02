@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ShieldCheck, Map, Sun, Moon, Laptop, Loader2, ArrowRight, Eye, EyeOff, Layers, ChartNoAxesCombined, Radar } from 'lucide-react';
 import './login.css';
 
+import { authErrorMessage } from '../../lib/authErrors';
 import { loadGoogleIdentity } from '../../lib/googleIdentity';
 
 type ThemeMode = 'system' | 'light' | 'dark';
@@ -31,6 +32,7 @@ export default function Login() {
   const inFlight = useRef(false);
   const active = useRef(true);
   const signInRequest = useRef<AbortController | null>(null);
+  const googleSignInUrl = process.env.NEXT_PUBLIC_GOOGLE_SIGN_IN_URL?.trim();
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim();
   const isGoogleAuthReady = Boolean(googleClientId) && process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === 'true';
 
@@ -90,7 +92,8 @@ export default function Login() {
         body: JSON.stringify(body), signal: controller.signal,
       });
       const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(result?.error || 'Sign-in could not be completed. Please try again.');
+      if (!response.ok) throw new Error(authErrorMessage(result, 'Sign-in could not be completed. Please try again.'));
+      if (!result || typeof result.email !== 'string') throw new Error('The sign-in service returned an unexpected response. Please try again.');
       if (!active.current) return;
       setSessionState('redirecting');
       router.replace('/dashboard');
@@ -214,8 +217,9 @@ export default function Login() {
             <div className="google-button-wrapper" aria-busy={busy || (isGoogleAuthReady && sdkState === 'loading')}>
               <div ref={googleButton} className="google-button" style={{ visibility: !busy && sdkState === 'ready' ? 'visible' : 'hidden' }} />
               {!busy && isGoogleAuthReady && sdkState === 'loading' && <div className="sign-in-loading" role="status"><Loader2 size={18} className="spinner" /> Loading Google sign-in…</div>}
-              {!busy && !isGoogleAuthReady && <p className="auth-hint">Google sign-in is unavailable. You can use your email and password.</p>}
+              {!busy && !isGoogleAuthReady && (googleSignInUrl ? <a className="auth-google-link" href={googleSignInUrl}><span className="auth-google-letter" aria-hidden="true">G</span> Continue with Google<ArrowRight size={16} /></a> : <p className="auth-hint">Google sign-in is being configured. Please try again shortly.</p>)}
             </div>
+            {!isGoogleAuthReady && googleSignInUrl && <p className="auth-hint auth-preview-note">Google sign-in opens the live GEOMATRIX site.</p>}
             {sdkState === 'error' && <button type="button" className="google-fallback-btn" disabled={busy} onClick={() => { setError(''); setSdkState('loading'); setRetry(value => value + 1); }}>Retry Google sign-in</button>}
             <p className="sign-in-notice" role="status" aria-live="polite">{slowSignIn ? 'The sign-in service is starting. This may take up to a minute.' : notice}</p>
             <p className="auth-switch">{registering ? 'Already have an account?' : 'New to GEOMATRIX?'} <button type="button" disabled={busy} onClick={() => switchMode(registering ? 'login' : 'register')}>{registering ? 'Sign in' : 'Create an account'}</button></p>

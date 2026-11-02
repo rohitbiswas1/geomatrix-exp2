@@ -1,3 +1,4 @@
+import { authErrorMessage } from './authErrors';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { backendUrl, checkOrigin, jsonError, SESSION_COOKIE } from './backend';
@@ -22,7 +23,10 @@ export async function passwordAuth(request: Request, action: 'login' | 'register
     });
     const payload = await upstream.json();
     if (!upstream.ok) {
-      const message = typeof payload.detail === 'string' ? payload.detail : 'Check your account details and try again.';
+      const fallback = upstream.status === 404 || upstream.status === 405
+        ? (action === 'register' ? 'Account creation is not active on this deployment yet. Please use Google sign-in.' : 'Email sign-in is not active on this deployment yet. Please use Google sign-in.')
+        : 'Check your account details and try again.';
+      const message = upstream.status === 404 || upstream.status === 405 ? fallback : authErrorMessage(payload, fallback);
       return jsonError(message, upstream.status);
     }
     if (typeof payload.token !== 'string' || !payload.user || !Number.isInteger(payload.expires_in) || payload.expires_in <= 0) {
