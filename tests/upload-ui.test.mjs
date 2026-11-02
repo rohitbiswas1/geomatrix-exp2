@@ -54,7 +54,7 @@ test('all rejected rows show reasons and never show a false success toast',async
     await visible(page.getByText(failed.errors[0],{exact:true}));
     await visible(page.getByText('0 of 1 records imported.',{exact:true}));
     assert.equal(await page.getByText('Imported 0 projects',{exact:true}).count(),0);
-    assert.equal(state.reads,1);
+    assert.equal(state.projects.length,0); // React Strict Mode may repeat initial reads.
   } finally { await context.close(); }
 });
 

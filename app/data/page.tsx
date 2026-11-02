@@ -23,16 +23,6 @@ interface UploadedFile {
   errorMessage?: string;
 }
 
-const PIPELINE_STEPS = [
-  { label: 'Uploaded', desc: 'File received by ingestion API', done: true },
-  { label: 'Validated', desc: 'Schema & field validation', done: true },
-  { label: 'Cleaned', desc: 'Duplicate & null handling', done: true },
-  { label: 'Feature Engineered', desc: 'Risk feature extraction', done: true },
-  { label: 'Records Imported', desc: 'Model inference queue', done: false },
-];
-
-
-
 function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -63,8 +53,10 @@ export default function DataPage() {
         totalProjects: dashSummary.total_projects,
         historicalRecords: trainSummary.total_records,
       });
+      return true;
     } catch {
-      // Keep static fallback
+      setPipelineMessage('Unable to refresh import history. Please try again.');
+      return false;
     }
   }, []);
 
@@ -128,22 +120,32 @@ export default function DataPage() {
     ];
   }, [files]);
   const completenessRows = useMemo(() => files.map(file => ({
+    id: file.id,
     label: file.name,
-    pct: file.completenessPct ?? 0,
+    pct: file.result?.records_fetched ? Math.round(file.result.records_saved / file.result.records_fetched * 100) : 0,
     color: file.status === 'ready' ? 'var(--green)' : 'var(--muted)',
   })), [files]);
+
+  const latestResult = files.slice().reverse().find(file => file.result)?.result;
+  const pipelineSteps = [
+    { label: 'Uploaded', desc: 'A file was received', done: !!latestResult },
+    { label: 'Parsed', desc: 'Source records were read', done: (latestResult?.records_fetched ?? 0) > 0 },
+    { label: 'Validated', desc: 'At least one record accepted', done: (latestResult?.records_saved ?? 0) + (latestResult?.records_duplicated ?? 0) > 0 },
+    { label: 'Saved', desc: 'New records committed to the database', done: (latestResult?.records_saved ?? 0) > 0 },
+    { label: 'Risk Analysis', desc: 'Run separately from the model page', done: false },
+  ];
 
   async function triggerPipelineRun() {
     if (isPipelineRunning) return;
     setIsPipelineRunning(true);
-    try { await loadDataInfo(); setPipelineMessage('Import history refreshed. Model training and risk analysis run separately.'); setActiveTab('pipeline'); }
+    try { if (await loadDataInfo()) setPipelineMessage('Import history refreshed. Model training and risk analysis run separately.'); setActiveTab('pipeline'); }
     finally { setIsPipelineRunning(false); }
   }
 
   async function runValidationAndEngineering() {
     if (isEngineering) return;
     setIsEngineering(true);
-    try { await loadDataInfo(); setPipelineMessage('Import results refreshed. See each file for validation errors and skipped records.'); }
+    try { if (await loadDataInfo()) setPipelineMessage('Import results refreshed. See each file for validation errors and skipped records.'); }
     finally { setIsEngineering(false); }
   }
 
@@ -370,12 +372,12 @@ export default function DataPage() {
           <div className="panel">
             <div className="panelhead">
               <div>
-                <div className="paneltitle">Field Completeness by Uploaded Dataset</div>
-                <div className="muted">Calculated from files uploaded in this session</div>
+                <div className="paneltitle">New Records Saved per Upload</div>
+                <div className="muted">Saved / submitted records in this session; duplicates are skipped</div>
               </div>
             </div>
-            {completenessRows.length > 0 ? completenessRows.map(({ label, pct, color }) => (
-              <div key={label} style={{ marginBottom: 12 }}>
+            {completenessRows.length > 0 ? completenessRows.map(({ id, label, pct, color }) => (
+              <div key={id} style={{ marginBottom: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
                   <span>{label}</span><span style={{ color }}>{pct}%</span>
                 </div>
@@ -392,13 +394,13 @@ export default function DataPage() {
       {activeTab === 'pipeline' && (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 0, marginBottom: 20 }}>
-            {PIPELINE_STEPS.map((step, i) => (
+            {pipelineSteps.map((step, i) => (
               <div key={step.label} style={{ display: 'flex', alignItems: 'center' }}>
                 <div
                   className="panel"
                   style={{
                     flex: 1, textAlign: 'center', padding: '20px 12px',
-                    borderLeft: i === 0 ? '3px solid var(--green)' : step.done ? '3px solid var(--green)' : '3px solid var(--line)',
+                    borderLeft: step.done ? '3px solid var(--green)' : '3px solid var(--line)',
                     background: step.done ? 'var(--green-bg)' : 'var(--bg)',
                   }}
                 >
@@ -406,7 +408,7 @@ export default function DataPage() {
                   <div style={{ fontWeight: 800, fontSize: 13, color: step.done ? 'var(--green-text)' : 'var(--muted)' }}>{step.label}</div>
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{step.desc}</div>
                 </div>
-                {i < PIPELINE_STEPS.length - 1 && (
+                {i < pipelineSteps.length - 1 && (
                   <div style={{ width: 20, height: 2, background: 'var(--line-strong)', flexShrink: 0 }} />
                 )}
               </div>
