@@ -52,7 +52,17 @@ class _DynamicEngine:
 
 
 engine = _DynamicEngine()
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+_session_factory = sessionmaker(autocommit=False, autoflush=False)
+
+
+def SessionLocal():
+    """Bind to a real Engine so every flush shares the session's transaction.
+
+    SQLAlchemy caches connections by the Engine object, not this module's
+    dynamic proxy. Binding the proxy can open another PostgreSQL connection
+    between flushes and lose visibility of the transaction's pending records.
+    """
+    return _session_factory(bind=engine._ensure_engine())
 
 # New columns added in the real-data upgrade. ALTER TABLE is idempotent because
 # SQLite raises "duplicate column name" which we silently ignore.
