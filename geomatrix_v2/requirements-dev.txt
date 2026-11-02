@@ -1,0 +1,3 @@
+-r requirements.txt
+# Used to sign test credentials locally; Google requests are mocked in tests.
+cryptography>=44.0.0

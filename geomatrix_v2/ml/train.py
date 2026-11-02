@@ -59,7 +59,9 @@ def _normalize_record_list(records: list) -> list:
             continue
         if rec.get("delayed") is None:
             continue
-        classification = str(rec.get("data_classification", "REAL")).upper()
+        if rec.get("training_data_version", TRAINING_DATA_VERSION) != TRAINING_DATA_VERSION:
+            continue
+        classification = str(rec.get("data_classification", "REAL")).strip().upper()
         if classification != "REAL":
             continue
         cleaned.append(rec)

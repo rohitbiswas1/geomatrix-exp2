@@ -1,4 +1,11 @@
 from datetime import datetime, timedelta
+import json
+import time
+from types import SimpleNamespace
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from google.auth import crypt, jwt
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,12 +42,47 @@ def test_api_requires_server_session(client, method, path):
     assert getattr(client, method)(path).status_code == 401
 
 
-def test_forged_google_token_is_rejected(client):
-    # Real verifier must reject this without accepting its claimed email.
-    response = client.post("/api/auth/google", json={"credential": "x.eyJlbWFpbCI6ImFkbWluQGV4YW1wbGUuY29tIn0.x"})
+@pytest.fixture(scope="module")
+def signing_material():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                serialization.NoEncryption())
+    public = key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+    return crypt.RSASigner.from_string(private, key_id="test-key"), public.decode()
+
+
+@pytest.mark.parametrize("invalid", ["forged", "expired", "wrong-audience", "wrong-issuer"])
+def test_invalid_google_token_is_rejected(client, monkeypatch, signing_material, invalid):
+    signer, public = signing_material
+    certs = json.dumps({"test-key": public}).encode()
+    monkeypatch.setattr("routers.auth.Request", lambda: lambda *a, **kw: SimpleNamespace(status=200, data=certs))
+    claims = {"iss": "https://accounts.google.com", "aud": "test-client.apps.googleusercontent.com",
+              "sub": "google-1", "email": "officer@example.com", "email_verified": True,
+              "iat": int(time.time()) - 120, "exp": int(time.time()) + 3600}
+    if invalid == "expired": claims['exp'] = int(time.time()) - 60
+    if invalid == "wrong-audience": claims['aud'] = 'other-client'
+    if invalid == "wrong-issuer": claims['iss'] = 'https://attacker.invalid'
+    token = jwt.encode(signer, claims).decode()
+    if invalid == 'forged':
+        header, payload, signature = token.split('.')
+        signature = ('A' if signature[0] != 'A' else 'B') + signature[1:]
+        token = '.'.join([header, payload, signature])
+    response = client.post("/api/auth/google", json={"credential": token})
     assert response.status_code == 401
     with SessionLocal() as db:
         assert db.query(AuthSession).count() == 0
+
+
+def test_valid_signed_google_token_creates_session(client, monkeypatch, signing_material):
+    signer, public = signing_material
+    certs = json.dumps({"test-key": public}).encode()
+    monkeypatch.setattr("routers.auth.Request", lambda: lambda *a, **kw: SimpleNamespace(status=200, data=certs))
+    claims = {"iss": "https://accounts.google.com", "aud": "test-client.apps.googleusercontent.com",
+              "sub": "google-1", "email": "officer@example.com", "email_verified": True,
+              "iat": int(time.time()) - 60, "exp": int(time.time()) + 3600}
+    response = client.post('/api/auth/google', json={'credential': jwt.encode(signer, claims).decode()})
+    assert response.status_code == 200
+    assert response.json()['user']['sub'] == 'google-1'
 
 
 def test_google_verifier_receives_configured_audience(client, monkeypatch):
