@@ -337,7 +337,7 @@ async def upload_csv(
 
                 approval_pending = _coerce_bool(_field_value(row, "approval_pending", "approval_pending_flag"))
                 if approval_pending is None:
-                    approval_pending = delayed
+                    approval_pending = None  # Missing inputs must never be inferred from the target label.
 
                 classification = _classification_for_source(source_name)
 

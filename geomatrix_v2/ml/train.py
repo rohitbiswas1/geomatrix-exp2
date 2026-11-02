@@ -95,6 +95,9 @@ def train_model(records: list, algorithm: str = "RandomForest") -> Dict[str, Any
             "Training rejected: Minimum 10 real labeled records in a valid two-class dataset are required; current dataset has only one class and is not valid for training."
         )
 
+    if min(np.bincount(y_clf)) < 2:
+        raise InsufficientDataError("At least two real labeled records per class are required for a stratified holdout.")
+
     real_regression_records = [
         r for r in records
         if r.get(REGRESSION_LABEL) is not None and r.get(REGRESSION_LABEL) != ""
@@ -105,18 +108,20 @@ def train_model(records: list, algorithm: str = "RandomForest") -> Dict[str, Any
     logger.info(f"Training on {len(records)} samples, {len(FEATURE_COLUMNS)} features")
     logger.info(f"Class distribution: {y_clf.sum()} delayed, {(y_clf == 0).sum()} on-time")
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
     if regression_available:
         X_train, X_test, y_clf_train, y_clf_test, y_reg_train, y_reg_test = train_test_split(
-            X_scaled, y_clf, y_reg, test_size=0.2, random_state=42, stratify=y_clf if len(set(y_clf)) > 1 else None
+            X, y_clf, y_reg, test_size=0.2, random_state=42, stratify=y_clf if len(set(y_clf)) > 1 else None
         )
     else:
         X_train, X_test, y_clf_train, y_clf_test = train_test_split(
-            X_scaled, y_clf, test_size=0.2, random_state=42, stratify=y_clf if len(set(y_clf)) > 1 else None
+            X, y_clf, test_size=0.2, random_state=42, stratify=y_clf if len(set(y_clf)) > 1 else None
         )
         y_reg_train = y_reg_test = np.array([])
+
+    # Fit preprocessing only on the training split; holdout rows stay unseen.
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
 
     if algorithm == "XGBoost" and XGBOOST_AVAILABLE:
         clf = XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.1,

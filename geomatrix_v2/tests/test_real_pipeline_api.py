@@ -254,3 +254,18 @@ def authenticated_pipeline():
     app.dependency_overrides[require_session] = lambda: object()
     yield
     app.dependency_overrides.pop(require_session, None)
+
+
+def test_missing_approval_is_not_derived_from_delay_label():
+    from database import SessionLocal
+    from models import HistoricalDelayRecord
+    rows = [_historical_row(0), _historical_row(1)]
+    for row in rows:
+        del row['approval_pending']
+    response = TestClient(app).post('/api/ingest/upload?data_type=historical',
+        files={'file': ('real-history.csv', _csv_bytes(rows), 'text/csv')})
+    assert response.json()['records_saved'] == 2
+    with SessionLocal() as db:
+        records = db.query(HistoricalDelayRecord).all()
+        assert {r.delayed for r in records} == {True, False}
+        assert all(r.approval_pending is None for r in records)
