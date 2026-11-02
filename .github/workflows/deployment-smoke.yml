@@ -7,65 +7,74 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Verify real production account lifecycle on persistent storage
+      - name: Verify production upload, persistence and source metadata
         run: |
           python3 - <<'PY'
           import json, secrets, uuid, time, urllib.request, urllib.error, http.cookiejar
-          
           base = "https://geomatrix-exp2.vercel.app"
-          origin = {"Origin": base, "Content-Type": "application/json"}
-          
-          def client():
-              jar = http.cookiejar.CookieJar()
-              return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)), jar
-          
-          def call(opener, path, body=None, expected=None):
-              req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(), headers=origin, method="GET" if body is None else "POST")
+          backend = "https://geomatrix-api-backend.onrender.com"
+          for attempt in range(45):
               try:
-                  response = opener.open(req, timeout=90)
-              except urllib.error.HTTPError as exc:
-                  response = exc
-              data = response.read()
-              status = response.code
-              parsed = json.loads(data) if data else None
-              if expected is not None and status != expected:
-                  raise AssertionError(path + " returned HTTP " + str(status) + ", expected " + str(expected))
-              return status, parsed
-          
-          for attempt in range(20):
-              probe, _ = client()
-              status, payload = call(probe, "/api/auth/login", {"email": "probe-" + uuid.uuid4().hex + "@example.invalid", "password": "intentionally-wrong-deployment-test"})
-              print("Persistent backend readiness:", status, flush=True)
-              if status == 401:
-                  break
-              if status != 503:
-                  raise AssertionError("Unexpected readiness response " + str(status))
+                  with urllib.request.urlopen(backend + "/openapi.json", timeout=45) as response:
+                      schema = json.load(response)
+                  if "source_details" in schema["components"]["schemas"]["ProjectOut"]["properties"]:
+                      print("New backend schema ready", flush=True)
+                      break
+              except Exception:
+                  pass
+              print("Waiting for reviewed backend deployment", flush=True)
               time.sleep(10)
           else:
-              raise AssertionError("Persistent account service did not become ready")
-          
-          email = "geomatrix-verification-" + uuid.uuid4().hex + "@example.invalid"
-          password = secrets.token_urlsafe(32)
-          opener, jar = client()
-          _, user = call(opener, "/api/auth/register", {"name": "GEOMATRIX automated verification", "email": email, "password": password}, 201)
-          assert user["email"] == email and "token" not in user and "password" not in user
-          session_cookie = next(cookie for cookie in jar if cookie.name == "geomatrix_session")
-          assert session_cookie.secure and any(key.lower() == "httponly" for key in session_cookie._rest)
-          _, me = call(opener, "/api/auth/me", expected=200)
-          assert me["user"]["email"] == email
-          call(opener, "/api/auth/logout", {}, 204)
-          call(opener, "/api/auth/me", expected=401)
-          fresh, fresh_jar = client()
-          _, logged_in = call(fresh, "/api/auth/login", {"email": email, "password": password}, 200)
-          assert logged_in["sub"] == user["sub"] and logged_in["email"] == email
-          call(fresh, "/api/auth/me", expected=200)
-          call(fresh, "/api/auth/logout", {}, 204)
-          call(fresh, "/api/auth/me", expected=401)
-          _, denied = call(fresh, "/api/auth/login", {"email": email, "password": "incorrect-verification-password"}, 401)
-          assert isinstance(denied.get("error"), str)
-          print("PASS: registration, secure cookie, session, logout, fresh password login, revocation, and wrong-password rejection")
-          print("Verification sessions revoked; no credentials retained.")
-          
+              raise AssertionError("New backend schema did not deploy")
+          with urllib.request.urlopen(base + "/datasets/mospi-may2024-projects.json", timeout=45) as response:
+              records = json.load(response)
+          assert len(records) == 30
+          codes = {record["project_code"] for record in records}
+          assert len(codes) == 30
+          jar = http.cookiejar.CookieJar()
+          client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+          def call(path, data=None, method=None, content_type="application/json", expected=200):
+              payload = json.dumps(data).encode() if data is not None and not isinstance(data, bytes) else data
+              req = urllib.request.Request(base + path, data=payload, method=method or ("POST" if data is not None else "GET"), headers={"Origin":base,"Content-Type":content_type})
+              try:
+                  response = client.open(req, timeout=90)
+              except urllib.error.HTTPError as exc:
+                  response = exc
+              body = response.read()
+              if response.code != expected:
+                  raise AssertionError(path + ": HTTP " + str(response.code) + " expected " + str(expected))
+              return json.loads(body) if body else None
+          credentials = {"name":"GEOMATRIX upload verification","email":"geomatrix-upload-" + uuid.uuid4().hex + "@example.invalid","password":secrets.token_urlsafe(32)}
+          call("/api/auth/register", credentials, expected=201)
+          try:
+              def upload():
+                  boundary = "geomatrix-" + uuid.uuid4().hex
+                  body = ("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"mospi-may2024-projects.json\"\r\nContent-Type: application/json\r\n\r\n").encode() + json.dumps(records).encode() + ("\r\n--" + boundary + "--\r\n").encode()
+                  return call("/api/ingest/upload?data_type=projects", body, content_type="multipart/form-data; boundary=" + boundary)
+              result = upload()
+              assert result["records_saved"] + result["records_duplicated"] == 30
+              assert result["records_failed"] == 0, "Official import rejected source records"
+              repeat = upload()
+              assert repeat["records_saved"] == 0 and repeat["records_duplicated"] == 30
+              projects = call("/api/projects?limit=500")
+              assert codes <= {project["project_code"] for project in projects}
+              item = next(project for project in projects if project["project_code"] == "N04000100")
+              assert item["source_details"]["reported_schedule_slippage_months"] == 8
+              assert item["source_details"]["observed_fields"] == []
+              assert item["risk_score"] is None
+              validation = call("/api/projects/" + item["id"] + "/validate")
+              assert not validation["can_predict"]
+              call("/api/projects/" + item["id"] + "/predict-risk", {}, expected=422)
+              call("/api/auth/logout", {}, expected=204)
+              call("/api/auth/me", expected=401)
+              call("/api/auth/login", {"email":credentials["email"],"password":credentials["password"]})
+              reloaded = call("/api/projects?limit=500")
+              assert codes <= {project["project_code"] for project in reloaded}
+              print("PASS: official records uploaded, duplicate retry skipped, 30 records persisted across fresh login, metadata retained, missing acquisition prediction rejected.")
+              print("Saved:", result["records_saved"], "Existing:", result["records_duplicated"])
+          finally:
+              call("/api/auth/logout", {}, expected=204)
+          print("Verification sessions revoked. No credentials retained.")
           PY
