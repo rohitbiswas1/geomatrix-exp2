@@ -29,21 +29,24 @@ export default function Login() {
 
   useEffect(() => {
     active.current = true;
+    let disposed = false;
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 75000);
     fetch('/api/auth/me', { cache: 'no-store', signal: controller.signal })
       .then(async (response) => {
-        if (!active.current) return;
-        if (response.ok && (await response.json()).user) {
+        if (disposed) return;
+        const session = response.ok ? await response.json() : null;
+        if (disposed) return;
+        if (session?.user) {
           setSessionState('redirecting');
           router.replace('/dashboard');
         } else {
           setSessionState('signed-out');
         }
       })
-      .catch(() => { if (active.current) setSessionState('signed-out'); })
+      .catch(() => { if (!disposed) setSessionState('signed-out'); })
       .finally(() => window.clearTimeout(timer));
-    return () => { active.current = false; controller.abort(); signInRequest.current?.abort(); window.clearTimeout(timer); };
+    return () => { disposed = true; active.current = false; controller.abort(); signInRequest.current?.abort(); window.clearTimeout(timer); };
   }, [router]);
 
   useEffect(() => {

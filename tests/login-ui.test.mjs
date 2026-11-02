@@ -34,8 +34,11 @@ async function setup(options = {}) {
   });
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path === '/api/auth/me') return route.fulfill({ status: state.signedIn ? 200 : 401,
-      json: state.signedIn ? { user: identity } : { error: 'Sign in required.' } });
+    if (path === '/api/auth/me') {
+      if (options.sessionDelay) await new Promise(resolve => setTimeout(resolve, options.sessionDelay));
+      return route.fulfill({ status: state.signedIn ? 200 : 401,
+        json: state.signedIn ? { user: identity } : { error: 'Sign in required.' } });
+    }
     if (path === '/api/auth/google') {
       state.posts++;
       if (options.signIn) return options.signIn(route, state);
@@ -56,7 +59,7 @@ async function setup(options = {}) {
 async function visible(locator) { await locator.waitFor({ state: 'visible', timeout: 15000 }); }
 
 test('existing server session redirects to dashboard without another Google prompt', async () => {
-  const { context, page, state } = await setup({ signedIn: true });
+  const { context, page, state } = await setup({ signedIn: true, sessionDelay: 350 });
   try {
     await page.waitForURL('**/dashboard');
     assert.equal(state.scripts, 0);
