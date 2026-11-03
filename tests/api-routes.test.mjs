@@ -282,3 +282,23 @@ test('an invalid readiness response fails immediately without retrying writes',a
  await assert.rejects(waitForAuthBackend({timeoutMs:1000,retryMs:1}),/Unexpected API health response/);
  assert.equal(calls.mock.callCount(),1);
 });
+
+test('read transport failures retry once on a fresh upstream connection', async () => {
+ jar.set(SESSION_COOKIE,'server-token');let calls=0;
+ mock.method(globalThis,'fetch',async (_url,init)=>{assert.equal(init.headers.get('Connection'),'close');if(++calls===1)throw new TypeError('stale socket');return Response.json([{id:'saved'}]);});
+ const response=await proxyBackend(request('/api/projects'));
+ assert.equal(response.status,200);assert.equal(calls,2);assert.deepEqual(await response.json(),[{id:'saved'}]);
+});
+test('write transport failures are never replayed', async () => {
+ jar.set(SESSION_COOKIE,'server-token');let calls=0;
+ mock.method(globalThis,'fetch',async()=>{calls++;throw new TypeError('lost response');});
+ assert.equal((await proxyBackend(request('/api/projects',{method:'POST',body:'{}'}))).status,503);
+ assert.equal(calls,1);
+});
+test('temporary upstream read errors recover without retrying authentication failures', async () => {
+ jar.set(SESSION_COOKIE,'server-token');let calls=0;
+ mock.method(globalThis,'fetch',async()=>{calls++;return calls===1?new Response('',{status:503}):Response.json([]);});
+ assert.equal((await proxyBackend(request('/api/projects'))).status,200);assert.equal(calls,2);
+ mock.restoreAll();calls=0;mock.method(globalThis,'fetch',async()=>{calls++;return new Response('',{status:401});});
+ assert.equal((await proxyBackend(request('/api/projects'))).status,401);assert.equal(calls,1);
+});

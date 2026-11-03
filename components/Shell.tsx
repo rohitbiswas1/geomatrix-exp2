@@ -69,7 +69,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         const data = await response.json();
         if (active) { setUserInfo(data.user); setAuthError(''); }
       } catch (error) {
-        if (active) { setUserInfo(null); setAuthError(error instanceof Error ? error.message : 'Could not verify sign-in.'); }
+        if (active) { setAuthError(error instanceof Error ? error.message : 'Could not verify sign-in.'); }
       }
     };
     void verify();
@@ -210,7 +210,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main className="main">
+      <main className="main">{authError && <p role="status" className="error-alert">Connection interrupted. Your workspace is retained while the service reconnects. <button className="btn" onClick={()=>setAuthRetry(value=>value+1)}>Retry connection</button></p>}
         <header className="topbar">
           <button className="btn mobile-menu-button" aria-label="Open navigation" aria-controls="app-navigation" aria-expanded={mobileNav} onClick={()=>setMobileNav(v=>!v)}>Menu</button>
           <div className="crumb">

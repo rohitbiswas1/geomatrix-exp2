@@ -7,7 +7,7 @@ export async function waitForBackend(healthUrl: string, { timeoutMs = 120000, re
   while (Date.now() < deadline) {
     try {
       const response = await fetch(healthUrl, {
-        cache: 'no-store', redirect: 'error',
+        cache: 'no-store', redirect: 'error', headers: { Connection: 'close' },
         signal: AbortSignal.timeout(Math.max(1, Math.min(10000, deadline - Date.now()))),
       });
       if (response.ok) {
