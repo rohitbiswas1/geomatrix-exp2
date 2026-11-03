@@ -84,6 +84,7 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  useEffect(() => { setSearch(new URLSearchParams(window.location.search).get('search') || ''); }, []);
   const [riskFilter, setRiskFilter] = useState('All');
   const [stateFilter, setStateFilter] = useState('All');
   const [stageFilter, setStageFilter] = useState('All');

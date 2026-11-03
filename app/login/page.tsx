@@ -41,7 +41,7 @@ export default function Login() {
     active.current = true;
     let disposed = false;
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 75000);
+    const timer = window.setTimeout(() => controller.abort(), 145000);
     fetch('/api/auth/me', { cache: 'no-store', signal: controller.signal })
       .then(async (response) => {
         if (disposed) return;
@@ -49,7 +49,7 @@ export default function Login() {
         if (disposed) return;
         if (session?.user) {
           setSessionState('redirecting');
-          router.replace('/dashboard');
+          window.location.replace('/dashboard');
         } else {
           setSessionState('signed-out');
         }
@@ -97,8 +97,7 @@ export default function Login() {
       if (!result || typeof result.email !== 'string') throw new Error('The sign-in service returned an unexpected response. Please try again.');
       if (!active.current) return;
       setSessionState('redirecting');
-      router.replace('/dashboard');
-      router.refresh();
+      window.location.replace('/dashboard');
     } catch (signInError) {
       if (active.current) {
         setError(controller.signal.aborted ? 'Sign-in took too long. Please try again.' :

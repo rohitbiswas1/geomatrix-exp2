@@ -2,6 +2,8 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { checkOrigin, proxyBackend, SESSION_COOKIE } from '../../../../lib/backend';
 
+export const maxDuration = 150;
+
 export async function POST(request: Request) {
   const originError = checkOrigin(request);
   if (originError) return originError;

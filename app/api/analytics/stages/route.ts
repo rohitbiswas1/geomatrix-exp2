@@ -1,9 +1,2 @@
-import { requireBackendSession } from '../../../../lib/backend';
-import { NextResponse } from 'next/server';
-
-export async function GET() {
-  const authError = await requireBackendSession();
-  if (authError) return authError;
-
-  return NextResponse.json({ data: [], message: 'Stage analytics require real project records in the database.' }, { status: 200 });
-}
+import { analyticsResponse } from '../../../../lib/analyticsRoute';
+export async function GET(request: Request) { return analyticsResponse(request, 'stages'); }

@@ -41,6 +41,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
   const [q, setQ] = useState('');
+  const [mobileNav,setMobileNav] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>('dark');
   const [userInfo, setUserInfo] = useState<{ role?: string; email?: string } | null>(null);
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
@@ -48,6 +49,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [openAlertCount, setOpenAlertCount] = useState<number | null>(null);
 
   const [authError, setAuthError] = useState('');
+  const [authRetry, setAuthRetry] = useState(0);
   const login = path === '/login';
 
   useEffect(() => {
@@ -56,11 +58,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
     const controller = new AbortController();
     const verify = async () => {
       try {
-        const response = await fetch('/api/auth/me', { cache: 'no-store', signal: controller.signal });
+        const response = await fetch('/api/auth/me', { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(145000)]) });
         if (!active) return;
         if (response.status === 401) {
           setUserInfo(null);
-          router.replace('/login');
+          window.location.replace('/login');
           return;
         }
         if (!response.ok) throw new Error('Sign-in service is unavailable. Please reload to retry.');
@@ -73,7 +75,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     void verify();
     const timer = window.setInterval(verify, 60000);
     return () => { active = false; controller.abort(); window.clearInterval(timer); };
-  }, [login, router]);
+  }, [login, router, authRetry]);
 
   useEffect(() => {
     setCurrentTime(new Date());
@@ -106,7 +108,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   // Theme synchronization - default to light
   useEffect(() => {
-    const saved = localStorage.getItem('geomatrix-theme') as ThemeMode | null;
+    let saved: ThemeMode | null = null;
+    try { saved = localStorage.getItem('geomatrix-theme') as ThemeMode | null; } catch { /* Use the default theme when storage is blocked. */ }
     if (saved) {
       setThemeMode(saved);
     } else {
@@ -115,7 +118,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('geomatrix-theme', themeMode);
+    try { localStorage.setItem('geomatrix-theme', themeMode); } catch { /* Theme changes still work without storage. */ }
     const media = window.matchMedia('(prefers-color-scheme: dark)');
 
     const applyTheme = () => {
@@ -130,7 +133,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   if (login) return <>{children}</>;
 
-  if (!userInfo) return <main role="status">{authError || 'Checking sign-in…'}</main>;
+  if (!userInfo) return <main className="page" role="status"><p>{authError || 'Checking sign-in… The service may need up to two minutes to start.'}</p>{authError && <button className="btn primary" onClick={() => { setAuthError(''); setAuthRetry(value => value + 1); }}>Retry connection</button>}</main>;
 
   const logout = async () => {
     try {
@@ -167,7 +170,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="app">
-      <aside className="sidebar">
+      {mobileNav && <button className="nav-backdrop" aria-label="Close navigation" onClick={()=>setMobileNav(false)}/>}
+      <aside id="app-navigation" className={'sidebar '+(mobileNav?'mobile-open':'')}>
         <div className="brand">
           <div className="brandmark">
             <Map size={19} />
@@ -178,11 +182,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
+        <button className="btn mobile-menu-button" onClick={()=>setMobileNav(false)} aria-label="Close menu">Close menu</button>
         <nav className="nav">
           {nav.map(([href, label, Icon]) => {
             const isActive = path.startsWith(href);
             return (
-              <Link key={href} href={href} className={isActive ? 'active' : ''}>
+              <Link key={href} href={href} className={isActive ? 'active' : ''} onClick={()=>setMobileNav(false)}>
                 <Icon size={16} />
                 <span>{label}</span>
               </Link>
@@ -207,6 +212,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
       <main className="main">
         <header className="topbar">
+          <button className="btn mobile-menu-button" aria-label="Open navigation" aria-controls="app-navigation" aria-expanded={mobileNav} onClick={()=>setMobileNav(v=>!v)}>Menu</button>
           <div className="crumb">
             GovTech Decision Support / <strong>{sectionName}</strong>
           </div>

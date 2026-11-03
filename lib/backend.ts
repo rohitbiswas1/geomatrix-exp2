@@ -1,3 +1,4 @@
+import { waitForBackend } from './backendReady';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
@@ -33,9 +34,10 @@ export async function requireBackendSession(): Promise<NextResponse | null> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return jsonError('Sign in required.', 401);
   try {
+    await waitForBackend(backendUrl('/health'));
     const response = await fetch(backendUrl('/api/auth/me'), {
       headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error', signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) return jsonError(response.status === 401 ? 'Session is invalid or expired.' : 'Authentication service unavailable.', response.status === 401 ? 401 : 503);
     return null;
@@ -76,9 +78,10 @@ export async function proxyBackend(request: Request): Promise<Response> {
     const headers = new Headers({ Authorization: `Bearer ${token}` });
     const contentType = request.headers.get('content-type');
     if (contentType) headers.set('Content-Type', contentType);
+    if (['/api/auth/me', '/api/auth/logout'].includes(url.pathname)) await waitForBackend(backendUrl('/health'));
     const upstream = await fetch(backendUrl(`${url.pathname}${url.search}`), {
       method: request.method, headers, body, cache: 'no-store', redirect: 'error',
-      signal: AbortSignal.timeout(url.pathname === '/api/model/train' ? 120000 : ['/api/auth/me', '/api/ingest/upload'].includes(url.pathname) ? 70000 : 30000),
+      signal: AbortSignal.timeout(url.pathname === '/api/model/train' ? 120000 : ['/api/auth/me', '/api/auth/logout'].includes(url.pathname) ? 15000 : url.pathname === '/api/ingest/upload' ? 70000 : 30000),
     });
     return new Response(upstream.body, {
       status: upstream.status,

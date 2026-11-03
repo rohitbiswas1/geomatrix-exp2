@@ -169,7 +169,7 @@ export default function DataPage() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '2px solid var(--line)' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 16, borderBottom: '2px solid var(--line)' }}>
         {([
           ['upload', 'File Upload', Upload],
           ['quality', 'Data Quality', CheckCircle2],
@@ -435,22 +435,9 @@ export default function DataPage() {
             </div>
 
             <div className="panel">
-              <div className="paneltitle" style={{ marginBottom: 14 }}>Trigger New Run</div>
+              <div className="paneltitle" style={{ marginBottom: 14 }}>Import status</div>
               <div className="form">
-                <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)' }}>Run Type</label>
-                <select className="filter-select" style={{ width: '100%' }}>
-                  <option>Full Pipeline (All Records)</option>
-                  <option>Incremental (New Records Only)</option>
-                  <option>Schema Validation Only</option>
-                  <option>Feature Engineering Only</option>
-                </select>
-                <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)' }}>Target Dataset</label>
-                <select className="filter-select" style={{ width: '100%' }}>
-                  <option>All Datasets</option>
-                  <option>Project Master Records</option>
-                  <option>Compensation Register</option>
-                  <option>Legal Case Register</option>
-                </select>
+                <p>Uploads are parsed, validated, and saved when submitted. Refresh to inspect persisted import history. Training runs separately in Model Intelligence.</p>
                 <button
                   className="btn primary"
                   style={{ width: '100%', justifyContent: 'center' }}
@@ -458,7 +445,7 @@ export default function DataPage() {
                   disabled={isPipelineRunning}
                 >
                   <RefreshCw size={13} style={{ animation: isPipelineRunning ? 'spin 1s linear infinite' : 'none' }} />
-                  {isPipelineRunning ? 'Running Pipeline...' : 'Trigger Pipeline Run'}
+                  {isPipelineRunning ? 'Refreshing…' : 'Refresh import history'}
                 </button>
                 {pipelineMessage && (
                   <div role="status" style={{ marginTop: 10, color: 'var(--green-text)', fontSize: 12 }}>
@@ -471,56 +458,7 @@ export default function DataPage() {
         </div>
       )}
 
-      {/* Tab: NLP Intelligence */}
-      {activeTab === 'nlp' && (
-        <div>
-          <div className="demo" style={{ marginBottom: 16 }}>
-            <AlertCircle size={14} />
-            Document NLP extraction is simulated in this prototype. No actual OCR or NLP processing is performed.
-          </div>
-          <div className="grid two" style={{ marginBottom: 16 }}>
-            <div className="panel">
-              <div className="paneltitle" style={{ marginBottom: 14 }}>Document Processing Status</div>
-              {files.length > 0 ? files.map((file) => {
-                const processed = file.status === 'ready' ? (file.rows || 0) : 0;
-                const count = file.rows || 0;
-                const pct = file.completenessPct ?? 0;
-                return (
-                  <div key={file.name} style={{ marginBottom: 16 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
-                      <span>{file.type} - {file.name}</span>
-                      <span style={{ color: 'var(--muted)', fontWeight: 500 }}>{processed.toLocaleString()} / {count.toLocaleString()} ({pct}%)</span>
-                    </div>
-                    <div style={{ height: 8, background: 'var(--line)', borderRadius: 4, overflow: 'hidden' }}>
-                      <div style={{ width: pct + '%', height: '100%', background: pct === 100 ? 'var(--green)' : 'var(--amber)', borderRadius: 4 }} />
-                    </div>
-                  </div>
-                );
-              }) : <div style={{ color: 'var(--muted)', fontSize: 13 }}>No uploaded documents to process yet.</div>}
-            </div>
-
-            <div className="panel">
-              <div className="paneltitle" style={{ marginBottom: 14 }}>NLP Extraction Architecture</div>
-              {([
-                ['Mock OCR', 'Document type, reference number, project ID, parties, date and authority extraction from uploaded PDFs.', ''],
-                ['Entity Recognition', 'Named entity recognition (NER) for land owner names, survey numbers, case IDs, and district references.', ''],
-                ['Risk Signal Classification', 'Legal-text processing to identify objection keywords, compensation disputes, and court order signals.', ''],
-                ['Future Architecture', 'OCR  NER  Classification pipeline using Tesseract + spaCy. No actual AI is running in prototype mode.', ''],
-              ]).map(([title, desc, icon]) => (
-                <div key={title as string} style={{ display: 'flex', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--line)' }}>
-                  <div style={{ fontSize: 20, flexShrink: 0 }}>{icon as string}</div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{title as string}</div>
-                    <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.5 }}>{desc as string}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {activeTab === 'nlp' && <section className="panel"><h2>Document extraction</h2><p>PDF and image extraction is not available. Upload structured CSV or JSON project and historical records using File Upload.</p><button className="btn primary" onClick={()=>setActiveTab('upload')}>Open File Upload</button></section>}
     </div>
   );
 }
-
-

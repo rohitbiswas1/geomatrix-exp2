@@ -1,163 +1,41 @@
 "use client";
-
-import { useEffect, useMemo, useState } from "react";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  BarChart,
-  Bar,
-} from "recharts";
-import { ApiProject, fetchProjects } from "../../lib/apiClient";
-
-type Period = "Monthly" | "Weekly" | "Quarterly";
-
-function average(values: number[]) {
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
-}
-
-function weekNumber(date: Date) {
-  const firstDay = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return Math.ceil(((date.getTime() - firstDay.getTime()) / 86400000 + firstDay.getUTCDay() + 1) / 7);
-}
-
-function periodLabel(date: Date, period: Period) {
-  const day = date.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-  if (period === "Monthly") return `${day} ${date.getUTCFullYear()}`;
-  if (period === "Quarterly") return `Q${Math.floor(date.getUTCMonth() / 3) + 1} · ${day}`;
-  return `W${weekNumber(date)} · ${day}`;
-}
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, BarChart, Bar } from 'recharts';
+import { type ApiProject, fetchProjects } from '../../lib/apiClient';
+import { portfolioSummary, riskTrend } from '../../lib/portfolio';
 
 export default function Analytics() {
   const [projects, setProjects] = useState<ApiProject[]>([]);
-  const [period, setPeriod] = useState<Period>("Monthly");
-
-  useEffect(() => {
-    fetchProjects({ limit: 500 }).then(setProjects).catch(() => setProjects([]));
+  const [period, setPeriod] = useState<'Monthly' | 'Weekly' | 'Quarterly'>('Monthly');
+  const [start, setStart] = useState(''), [end, setEnd] = useState('');
+  const [dateFilter, setDateFilter] = useState(false);
+  const [loading, setLoading] = useState(true), [error, setError] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try { setProjects(await fetchProjects({ limit: 500 })); }
+    catch(e) { setError(e instanceof Error ? e.message : 'Could not load analytics.'); }
+    finally { setLoading(false); }
   }, []);
-
-  const trend = useMemo(() => {
-    return projects
-      .filter((project) => project.updated_at && project.risk_score != null)
-      .map((project) => {
-        const date = new Date(project.updated_at as string);
-        return { project, date };
-      })
-      .filter(({ date }) => !Number.isNaN(date.getTime()))
-      .sort((a, b) => a.date.getTime() - b.date.getTime())
-      .map(({ project, date }) => ({
-        label: periodLabel(date, period),
-        risk: Number((project.risk_score || 0).toFixed(1)),
-        project: project.name,
-      }));
-  }, [projects, period]);
-
-  const district = useMemo(() => {
-    const grouped = new Map<string, number[]>();
-    projects.forEach((project) => {
-      if (project.delay_probability == null || !project.district) return;
-      grouped.set(project.district, [...(grouped.get(project.district) || []), project.delay_probability * 100]);
-    });
-    return Array.from(grouped, ([districtName, values]) => ({
-      district: districtName.length > 14 ? `${districtName.slice(0, 14)}…` : districtName,
-      probability: Number((average(values) || 0).toFixed(1)),
-    })).sort((a, b) => b.probability - a.probability);
-  }, [projects]);
-
-  const metrics = useMemo(() => {
-    const atRisk = projects.filter((project) => project.risk_score != null && project.risk_score >= 50);
-    const compensationBacklog = projects.filter((project) => {
-      const status = (project.compensation_status || "").toLowerCase();
-      return status === "pending" || status === "partial" || status === "in progress";
-    }).length;
-    const requiredLand = projects.reduce((sum, project) => sum + (project.land_required || 0), 0);
-    const acquiredLand = projects.reduce((sum, project) => sum + (project.land_acquired || 0), 0);
-    const predictedDelay = average(projects.map((project) => project.predicted_delay_days).filter((value): value is number => value != null));
-    const legalCases = projects.reduce((sum, project) => sum + (project.legal_case_count || 0), 0);
-    const driverRisk = new Map<string, number>();
-    projects.forEach((project) => {
-      if (project.primary_driver) {
-        driverRisk.set(project.primary_driver, (driverRisk.get(project.primary_driver) || 0) + (project.risk_score || 0));
-      }
-    });
-    const topDriver = Array.from(driverRisk.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "No verified data";
-    return {
-      averagePredictedDelay: predictedDelay == null ? "No verified data" : `${predictedDelay.toFixed(0)} days`,
-      compensationBacklog: `${compensationBacklog} projects`,
-      acquisitionProgress: requiredLand ? `${((acquiredLand / requiredLand) * 100).toFixed(1)}% acquired` : "No verified data",
-      topDriver,
-      legalCases: `${legalCases} cases`,
-      atRiskLand: `${atRisk.reduce((sum, project) => sum + (project.land_required || 0), 0).toLocaleString("en-IN")} ha`,
-    };
-  }, [projects]);
-
-  const cards = [
-    ["Average predicted delay", metrics.averagePredictedDelay, "Mean of stored predictions"],
-    ["Compensation backlog", metrics.compensationBacklog, "From project compensation status"],
-    ["Land acquisition progress", metrics.acquisitionProgress, "From recorded land totals"],
-    ["Top delay driver", metrics.topDriver, "Highest cumulative project risk"],
-    ["Legal cases", metrics.legalCases, "Sum of recorded legal cases"],
-    ["At-risk land", metrics.atRiskLand, "Land in projects scoring 50+"],
-  ] as const;
-
-  return (
-    <div className="page">
-      <div className="head">
-        <div>
-          <div className="eyebrow">Portfolio intelligence</div>
-          <h1 className="h1">Analytics</h1>
-          <div className="sub">Risk trends, stage duration, drivers and completion forecast.</div>
-        </div>
-        <div className="actions">
-          <select className="btn" value={period} onChange={(event) => setPeriod(event.target.value as Period)}>
-            <option>Monthly</option><option>Weekly</option><option>Quarterly</option>
-          </select>
-          <button className="btn">Date filter</button>
-        </div>
-      </div>
-      <div className="grid two">
-        <div className="panel">
-          <div className="paneltitle">Risk trends over time</div>
-          <div className="chart">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trend}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" fontSize={9} />
-                <YAxis fontSize={9} />
-                <Tooltip formatter={(value) => [`${value}`, "Risk score"]} />
-                <Line type="monotone" dataKey="risk" name="Average risk score" stroke="#1769aa" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-        <div className="panel">
-          <div className="paneltitle">Delay probability by district</div>
-          <div className="chart">
-            <ResponsiveContainer width="100%" height="100%">
-              {district.length === 0 ? <div className="command-empty">No verified district delay data available</div> : <BarChart data={district}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="district" fontSize={8} />
-                <YAxis domain={[0, 100]} fontSize={9} unit="%" />
-                <Tooltip formatter={(value) => [`${value}%`, "Delay probability"]} />
-                <Bar dataKey="probability" name="Delay probability" fill="#7048c6" />
-              </BarChart>}
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-      <div className="grid three" style={{ marginTop: 14 }}>
-        {cards.map(([label, value, source]) => (
-          <div className="kpi" key={label}>
-            <div className="label">{label}</div>
-            <div className="value" style={{ fontSize: 20 }}>{value}</div>
-            <div className="trend">{source}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  useEffect(() => { void load(); }, [load]);
+  const filtered = useMemo(() => projects.filter(p => {
+    if (!dateFilter || (!start && !end)) return true;
+    if (!p.updated_at) return false;
+    const date = p.updated_at.slice(0,10);
+    return (!start || date >= start) && (!end || date <= end);
+  }), [projects, dateFilter, start, end]);
+  const summary = useMemo(() => portfolioSummary(filtered), [filtered]);
+  const trend = useMemo(() => riskTrend(filtered, period), [filtered, period]);
+  return <div className="page">
+    <div className="head"><div><div className="eyebrow">Portfolio intelligence</div><h1 className="h1">Analytics</h1><p className="sub">Calculated from saved project records and stored predictions.</p></div>
+      <div className="actions"><select className="btn" aria-label="Analytics period" value={period} onChange={e => setPeriod(e.target.value as typeof period)}><option>Monthly</option><option>Weekly</option><option>Quarterly</option></select>
+      <button className="btn" aria-expanded={dateFilter} onClick={() => setDateFilter(v => !v)}>Date filter</button><button className="btn" disabled={loading} onClick={load}>Refresh</button></div></div>
+    {dateFilter && <div className="panel actions"><label>Updated from <input type="date" aria-label="Updated from" value={start} onChange={e=>setStart(e.target.value)} /></label><label>Updated through <input type="date" aria-label="Updated through" value={end} min={start} onChange={e=>setEnd(e.target.value)} /></label><button className="btn" onClick={()=>{setStart('');setEnd('');}}>Clear dates</button></div>}
+    {error && <p role="alert" className="error-alert">{error}</p>}
+    {loading ? <p role="status">Loading analytics…</p> : !error && <>
+      <div className="grid three">{[['Projects',summary.total_projects],['Stored predictions',summary.classified_projects],['Average risk',summary.average_risk == null ? 'Not predicted' : summary.average_risk.toFixed(1)],['Critical + High',summary.classified_projects ? summary.critical_high : 'Not predicted'],['Land required',summary.land_required.toLocaleString('en-IN')+' ha'],['Land acquired',summary.land_acquired.toLocaleString('en-IN')+' ha']].map(([label,value])=><div className="kpi" key={label}><div className="label">{label}</div><div className="value" style={{fontSize:22}}>{value}</div></div>)}</div>
+      <div className="grid two" style={{marginTop:16}}><div className="panel"><h2 className="paneltitle">Risk by latest project update</h2><p className="sub">Average stored scores grouped by update period; this is not prediction history.</p><div className="chart">{trend.length ? <ResponsiveContainer width="100%" height="100%"><LineChart data={trend}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="label" fontSize={10}/><YAxis domain={[0,100]}/><Tooltip/><Line dataKey="risk" name="Average risk" stroke="#1769aa"/></LineChart></ResponsiveContainer> : <p className="command-empty">No stored predictions available.</p>}</div></div>
+      <div className="panel"><h2 className="paneltitle">Delay probability by district</h2><div className="chart">{summary.districts.some(d=>d.probability!=null) ? <ResponsiveContainer width="100%" height="100%"><BarChart data={summary.districts.filter(d=>d.probability!=null)}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="district" fontSize={9}/><YAxis domain={[0,100]} unit="%"/><Tooltip/><Bar dataKey="probability" name="Delay probability" fill="#7048c6"/></BarChart></ResponsiveContainer> : <p className="command-empty">No stored district delay predictions available.</p>}</div></div></div>
+      <div className="panel" style={{marginTop:16}}><h2 className="paneltitle">Acquisition stages</h2><div className="tablewrap"><table className="table"><thead><tr><th>Stage</th><th>Projects</th></tr></thead><tbody>{summary.stages.map(s=><tr key={s.stage}><td>{s.stage}</td><td>{s.projects}</td></tr>)}</tbody></table></div></div>
+    </>}
+  </div>;
 }

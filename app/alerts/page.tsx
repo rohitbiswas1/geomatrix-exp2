@@ -28,6 +28,8 @@ export default function AlertsPage() {
   const [severityFilter, setSeverityFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [selected, setSelected] = useState<AlertRow | null>(null);
+  const [error,setError] = useState('');
+  const [saving,setSaving] = useState(false);
 
   useEffect(() => {
     async function loadAlerts() {
@@ -46,13 +48,13 @@ export default function AlertsPage() {
           detected: new Date(a.detected_at).toLocaleDateString('en-IN'),
           action: a.recommended_action || 'Review intervention queue',
           status: a.status || 'Open',
-          assignedTo: '',
-          dueDate: '',
-          outcome: '',
+          assignedTo: a.assigned_to || '',
+          dueDate: a.due_date || '',
+          outcome: a.outcome || '',
         }));
         setRows(mapped);
-      } catch {
-        setRows([]);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not load alerts.');
       }
     }
     loadAlerts();
@@ -62,28 +64,33 @@ export default function AlertsPage() {
   const [dueDateField, setDueDateField] = useState('');
   const [toast, setToast] = useState('');
 
-  function update(id: string, changes: Partial<AlertRow>) {
-    setRows(prev => prev.map(a => a.id === id ? { ...a, ...changes } : a));
-    if (selected?.id === id) setSelected(prev => prev ? { ...prev, ...changes } : prev);
+  async function update(id: string, changes: Partial<AlertRow>) {
+    const response=await fetch('/api/alerts/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      ...(changes.status?{status:changes.status}:{}),
+      ...(changes.assignedTo!==undefined?{assigned_to:changes.assignedTo}:{}),
+      ...(changes.dueDate!==undefined?{due_date:changes.dueDate||null}:{}),
+      ...(changes.outcome!==undefined?{outcome:changes.outcome}:{})
+    })});
+    if(!response.ok){const body=await response.json().catch(()=>null);throw new Error(typeof body?.detail==='string'?body.detail:'Alert update failed. Please retry.');}
+    setRows(prev=>prev.map(a=>a.id===id?{...a,...changes}:a));
+    setSelected(prev=>prev?.id===id?{...prev,...changes}:prev);
   }
-
-  function bulkUpdate(status: string) {
-    setRows(prev => prev.map(a =>
-      (severityFilter === 'All' || a.severity === severityFilter) ? { ...a, status } : a
-    ));
-    showToast(`All ${severityFilter === 'All' ? '' : severityFilter + ' '}alerts marked as ${status}`);
+  async function persist(id:string,changes:Partial<AlertRow>){
+    if(saving)return;
+    setSaving(true);setError('');
+    try{await update(id,changes);showToast('Alert saved');}catch(e){setError(e instanceof Error?e.message:'Alert update failed.');}finally{setSaving(false);}
   }
-
-  function showToast(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast(''), 3000);
+  async function bulkUpdate(status:string){
+    if(saving)return;
+    setSaving(true);setError('');
+    const visible=rows.filter(a=>(severityFilter==='All'||a.severity===severityFilter)&&(statusFilter==='All'||a.status===statusFilter));
+    try{for(const alert of visible)await update(alert.id,{status});showToast(visible.length+' visible alerts saved');}catch(e){setError(e instanceof Error?e.message:'Some updates failed. Please retry.');}finally{setSaving(false);}
   }
-
-  function doAssign() {
-    if (!assignModal || assignModal.status !== 'Acknowledged') return;
-    update(assignModal.id, { assignedTo: assignToField, dueDate: dueDateField, status: 'Acknowledged' });
-    showToast(`Alert assigned to ${assignToField}`);
-    setAssignModal(null);
+  function showToast(message:string){setToast(message);setTimeout(()=>setToast(''),3000);}
+  async function doAssign(){
+    if(!assignModal||assignModal.status!=='Acknowledged'||!assignToField.trim()||saving)return;
+    setSaving(true);setError('');
+    try{await update(assignModal.id,{assignedTo:assignToField.trim(),dueDate:dueDateField,status:'Acknowledged'});showToast('Assignment saved');setAssignModal(null);}catch(e){setError(e instanceof Error?e.message:'Could not save assignment.');}finally{setSaving(false);}
   }
 
   const filtered = useMemo(() => rows.filter(a => {
@@ -118,6 +125,7 @@ export default function AlertsPage() {
 
   return (
     <div className="page">
+      {error && <p role="alert" className="error-alert">{error}</p>}
       <div className="head">
         <div>
           <div className="eyebrow"><Bell size={11} /> Early Warning System</div>
@@ -128,7 +136,7 @@ export default function AlertsPage() {
           </div>
         </div>
         <div className="actions">
-          <button className="btn" onClick={() => bulkUpdate('Acknowledged')}>
+          <button className="btn" disabled={saving} onClick={() => bulkUpdate('Acknowledged')}>
             <CheckCircle2 size={13} /> Acknowledge Visible
           </button>
           <button className="btn" onClick={() => bulkUpdate('Resolved')}>
@@ -263,7 +271,7 @@ export default function AlertsPage() {
                         )}
                         {a.status !== 'Resolved' && (
                           <button className="btn" style={{ padding: '6px 10px', fontSize: 12 }}
-                            onClick={() => { update(a.id, { status: 'Resolved', outcome: 'Manually resolved' }); showToast('Alert resolved'); }}>
+                            onClick={() => { void persist(a.id, { status: 'Resolved', outcome: 'Manually resolved' }); }}>
                             <CheckCircle2 size={11} />
                           </button>
                         )}
@@ -347,7 +355,7 @@ export default function AlertsPage() {
               </button>
               {selected.status !== 'Resolved' && (
                 <button className="btn primary" style={{ width: '100%', justifyContent: 'center' }}
-                  onClick={() => { update(selected.id, { status: 'Resolved' }); showToast('Alert resolved'); }}>
+                  onClick={() => { void persist(selected.id, { status: 'Resolved' }); }}>
                   <CheckCircle2 size={14} /> Mark Resolved
                 </button>
               )}

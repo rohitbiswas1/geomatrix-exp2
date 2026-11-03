@@ -20,8 +20,8 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const fallback = res.status === 413 ? 'Files must be 4 MB or smaller. Split larger files before uploading.' :
-      res.status === 401 ? 'Your session has expired. Sign in again, then retry the upload.' :
-      'The request could not be completed. Please try again.';
+      res.status === 401 ? 'Your session has expired. Sign in again, then retry.' :
+      res.status === 503 ? 'The service is starting or temporarily unavailable. Please retry in a moment.' : 'The request could not be completed. Please try again.';
     throw new ApiError(res.status, authErrorMessage(body, fallback));
   }
   if (res.status === 204) return undefined as T;
@@ -156,6 +156,9 @@ export interface ApiAlert {
   detected_at: string;
   recommended_action?: string;
   status: string;
+  assigned_to?: string;
+  due_date?: string;
+  outcome?: string;
 }
 
 export interface IngestResult {
@@ -291,7 +294,7 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
 // â”€â”€ Alerts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function fetchAlerts(status = 'Open', limit = 100): Promise<ApiAlert[]> {
-  return apiFetch<ApiAlert[]>(`/api/alerts?status=${status}&limit=${limit}`);
+  return apiFetch<ApiAlert[]>(`/api/alerts?status=${encodeURIComponent(status.toLowerCase() === 'all' ? 'all' : status)}&limit=${limit}`);
 }
 
 export async function fetchAlertsSummary() {

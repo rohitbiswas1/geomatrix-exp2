@@ -121,6 +121,7 @@ test('large streaming bodies are rejected before forwarding', async () => {
 test('logout revokes the backend session before clearing the cookie', async () => {
   jar.set(SESSION_COOKIE, 'server-token');
   mock.method(globalThis, 'fetch', async (url) => {
+    if (url.endsWith('/health')) return Response.json({ status: 'ok' });
     assert.equal(url, 'https://api.example.com/api/auth/logout');
     return new Response(null, { status: 204 });
   });
@@ -129,7 +130,7 @@ test('logout revokes the backend session before clearing the cookie', async () =
 });
 test('logout outage retains cookie so revocation can be retried', async () => {
   jar.set(SESSION_COOKIE, 'server-token');
-  mock.method(globalThis, 'fetch', async () => { throw Error('unavailable'); });
+  mock.method(globalThis, 'fetch', async url => { if (url.endsWith('/health')) return Response.json({ status: 'ok' }); throw Error('unavailable'); });
   assert.equal((await logout(request('/api/auth/logout', { method: 'POST' }))).status, 503);
   assert.equal(jar.has(SESSION_COOKIE), true);
 });
@@ -141,7 +142,7 @@ test('login sets a secure HttpOnly cookie and never exposes the session token', 
   const { POST: login } = await import('../app/api/auth/google/route.ts');
   process.env.NODE_ENV = 'production';
   try {
-    mock.method(globalThis, 'fetch', async () => Response.json({
+    mock.method(globalThis, 'fetch', async url => url.endsWith('/health') ? Response.json({status:'ok'}) : Response.json({
       token: 'private-token', user: { email: 'officer@example.com' }, expires_in: 28800,
     }));
     const response = await login(request('/api/auth/google', { method: 'POST',
@@ -249,4 +250,35 @@ test('lost registration response never replays the account creation request', as
   assert.equal(response.status, 503);
   assert.equal(posts, 1);
   assert.equal(jar.size, 0);
+});
+
+test('existing sessions wake the backend before session verification', async () => {
+  jar.set(SESSION_COOKIE, 'server-token');
+  const paths = [];
+  mock.method(globalThis, 'fetch', async url => {
+    paths.push(new URL(url).pathname);
+    return Response.json(url.endsWith('/health') ? { status: 'ok' } : { user: { email: 'test@example.com' } });
+  });
+  assert.equal((await proxyBackend(request('/api/auth/me'))).status, 200);
+  assert.deepEqual(paths, ['/health', '/api/auth/me']);
+});
+
+test('analytics endpoints aggregate persisted projects instead of returning a placeholder outage',async()=>{
+ const {GET:overview}=await import('../app/api/analytics/overview/route.ts');
+ jar.set(SESSION_COOKIE,'server-token');
+ mock.method(globalThis,'fetch',async(url,init)=>{
+  assert.equal(url,'https://api.example.com/api/projects?limit=500');
+  assert.equal(init.headers.get('Authorization'),'Bearer server-token');
+  return Response.json([{state:'A',district:'D',risk_score:90},{state:'A',district:'D',risk_score:null}]);
+ });
+ const response=await overview(request('/api/analytics/overview'));
+ const data=await response.json();
+ assert.equal(response.status,200);assert.equal(data.total_projects,2);assert.equal(data.average_risk,90);assert.equal(data.unclassified_projects,1);
+});
+
+test('an invalid readiness response fails immediately without retrying writes',async()=>{
+ const {waitForAuthBackend}=await import('../lib/authBackend.ts');
+ const calls=mock.method(globalThis,'fetch',async()=>Response.json({unexpected:true}));
+ await assert.rejects(waitForAuthBackend({timeoutMs:1000,retryMs:1}),/Unexpected API health response/);
+ assert.equal(calls.mock.callCount(),1);
 });
