@@ -26,15 +26,15 @@ class ProjectOut(BaseModel):
 
     # Extended prediction fields
     compensation_status: Optional[str] = None
-    objection_count: Optional[int] = None
-    legal_case_count: Optional[int] = None
+    objection_count: Optional[int] = Field(default=None, ge=0)
+    legal_case_count: Optional[int] = Field(default=None, ge=0)
     rr_status: Optional[str] = None
     env_clearance_status: Optional[str] = None
     forest_clearance_status: Optional[str] = None
     crz_status: Optional[str] = None
-    doc_completeness_pct: Optional[float] = None
+    doc_completeness_pct: Optional[float] = Field(default=None, ge=0, le=100)
     approval_pending: Optional[bool] = None
-    overdue_milestones: Optional[int] = None
+    overdue_milestones: Optional[int] = Field(default=None, ge=0)
 
     # ML outputs
     risk_score: Optional[float]
@@ -66,25 +66,25 @@ class ProjectCreate(BaseModel):
     authority: str
     project_type: str
     description: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    land_required: float = 0.0
-    land_acquired: float = 0.0
-    affected_families: int = 0
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    land_required: float = Field(default=0.0, ge=0)
+    land_acquired: float = Field(default=0.0, ge=0)
+    affected_families: int = Field(default=0, ge=0)
     current_stage: Optional[str] = None
     status: Optional[str] = None
 
     # Extended fields for prediction
     compensation_status: Optional[str] = None
-    objection_count: Optional[int] = 0
-    legal_case_count: Optional[int] = 0
+    objection_count: Optional[int] = Field(default=0, ge=0)
+    legal_case_count: Optional[int] = Field(default=0, ge=0)
     rr_status: Optional[str] = None
     env_clearance_status: Optional[str] = None
     forest_clearance_status: Optional[str] = None
     crz_status: Optional[str] = None
-    doc_completeness_pct: Optional[float] = 50.0
+    doc_completeness_pct: Optional[float] = Field(default=50.0, ge=0, le=100)
     approval_pending: Optional[bool] = False
-    overdue_milestones: Optional[int] = 0
+    overdue_milestones: Optional[int] = Field(default=0, ge=0)
 
     source_url: Optional[str] = None
     source_record_id: Optional[str] = None
@@ -100,21 +100,21 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    land_required: Optional[float] = None
-    land_acquired: Optional[float] = None
-    affected_families: Optional[int] = None
+    land_required: Optional[float] = Field(default=None, ge=0)
+    land_acquired: Optional[float] = Field(default=None, ge=0)
+    affected_families: Optional[int] = Field(default=None, ge=0)
     current_stage: Optional[str] = None
     status: Optional[str] = None
     compensation_status: Optional[str] = None
-    objection_count: Optional[int] = None
-    legal_case_count: Optional[int] = None
+    objection_count: Optional[int] = Field(default=None, ge=0)
+    legal_case_count: Optional[int] = Field(default=None, ge=0)
     rr_status: Optional[str] = None
     env_clearance_status: Optional[str] = None
     forest_clearance_status: Optional[str] = None
     crz_status: Optional[str] = None
-    doc_completeness_pct: Optional[float] = None
+    doc_completeness_pct: Optional[float] = Field(default=None, ge=0, le=100)
     approval_pending: Optional[bool] = None
-    overdue_milestones: Optional[int] = None
+    overdue_milestones: Optional[int] = Field(default=None, ge=0)
 
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
@@ -128,6 +128,9 @@ class AlertOut(BaseModel):
     detected_at: datetime
     recommended_action: Optional[str]
     status: str
+    assigned_to: Optional[str] = None
+    due_date: Optional[str] = None
+    outcome: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

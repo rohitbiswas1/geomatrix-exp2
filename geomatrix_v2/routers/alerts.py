@@ -12,11 +12,11 @@ router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 @router.get("", response_model=list[AlertOut])
 def list_alerts(
     status: str = Query("Open"),
-    limit: int = Query(50),
+    limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db)
 ):
     q = db.query(Alert)
-    if status != "all":
+    if status.lower() != "all":
         q = q.filter(Alert.status == status)
     alerts = q.order_by(Alert.detected_at.desc()).limit(limit).all()
 
@@ -51,3 +51,30 @@ def acknowledge_alert(alert_id: str, db: Session = Depends(get_db)):
     alert.status = "Acknowledged"
     db.commit()
     return {"id": alert.id, "status": alert.status}
+
+
+from datetime import date
+from typing import Literal, Optional
+from pydantic import BaseModel, Field
+
+class AlertUpdate(BaseModel):
+    status: Optional[Literal["Open", "Acknowledged", "Monitoring", "Resolved"]] = None
+    assigned_to: Optional[str] = Field(default=None, max_length=200)
+    due_date: Optional[date] = None
+    outcome: Optional[str] = Field(default=None, max_length=4000)
+
+@router.patch("/{alert_id}", response_model=AlertOut)
+def update_alert(alert_id: str, body: AlertUpdate, db: Session = Depends(get_db)):
+    alert = db.get(Alert, alert_id)
+    if alert is None:
+        raise HTTPException(404, "Alert not found")
+    if body.assigned_to and alert.status == "Open" and body.status not in {"Acknowledged", "Monitoring", "Resolved"}:
+        raise HTTPException(409, "Acknowledge the alert before assigning an officer.")
+    for key, value in body.model_dump(exclude_unset=True).items():
+        setattr(alert, key, value.isoformat() if isinstance(value, date) else value)
+    db.commit()
+    db.refresh(alert)
+    out = AlertOut.model_validate(alert)
+    project = db.get(Project, alert.project_id)
+    out.project_name = project.name if project else None
+    return out

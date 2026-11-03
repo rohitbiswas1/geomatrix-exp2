@@ -114,6 +114,8 @@ def get_project(project_id: str, db: Session = Depends(get_db)):
 
 @router.post("", response_model=ProjectOut, status_code=201)
 def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
+    if body.land_acquired > body.land_required:
+        raise HTTPException(422, "Acquired land cannot exceed required land.")
     existing = db.query(Project).filter_by(project_code=body.project_code).first()
     if existing:
         raise HTTPException(409, f"Project code '{body.project_code}' already exists")
@@ -136,6 +138,10 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
     p = db.query(Project).filter_by(id=project_id).first()
     if not p:
         raise HTTPException(404, "Project not found")
+    required = body.land_required if body.land_required is not None else p.land_required
+    acquired = body.land_acquired if body.land_acquired is not None else p.land_acquired
+    if acquired > required:
+        raise HTTPException(422, "Acquired land cannot exceed required land.")
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(p, field, value)
     if p.source_details is not None:
@@ -288,3 +294,72 @@ def stored_risk(project_id: str, db: Session = Depends(get_db)):
     fields = ('risk_score', 'risk_level', 'delay_probability', 'predicted_delay_days', 'confidence')
     return {'project_id': project.id, 'status': 'ok' if project.risk_score is not None else 'not_predicted',
             **{field: getattr(project, field) for field in fields}}
+
+
+# Workflow records are persisted independently of project source provenance.
+from datetime import date
+from typing import Literal
+from pydantic import BaseModel, Field
+from models import Intervention
+
+class InterventionCreate(BaseModel):
+    model_config = {"str_strip_whitespace": True}
+    action: str = Field(min_length=1, max_length=100)
+    assigned_to: str = Field(min_length=1, max_length=200)
+    priority: Literal["Critical", "High", "Medium", "Low"] = "Medium"
+    due_date: Optional[date] = None
+    note: str = Field(min_length=1, max_length=4000)
+
+def intervention_record(item):
+    return {key: getattr(item, key) for key in
+            ("id", "project_id", "action", "assigned_to", "priority", "due_date", "note", "created_at")}
+
+@router.get("/{project_id}/interventions")
+def list_interventions(project_id: str, db: Session = Depends(get_db)):
+    get_project(project_id, db)
+    return [intervention_record(item) for item in db.query(Intervention)
+            .filter_by(project_id=project_id).order_by(Intervention.created_at.desc()).all()]
+
+@router.post("/{project_id}/interventions", status_code=201)
+def create_intervention(project_id: str, body: InterventionCreate, db: Session = Depends(get_db)):
+    get_project(project_id, db)
+    values = body.model_dump()
+    if body.due_date:
+        values["due_date"] = body.due_date.isoformat()
+    item = Intervention(id=str(uuid.uuid4()), project_id=project_id, **values)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return intervention_record(item)
+
+class ScenarioInputs(BaseModel):
+    objection_count: int = Field(ge=0, le=100000)
+    legal_case_count: int = Field(ge=0, le=100000)
+    doc_completeness_pct: float = Field(ge=0, le=100)
+    approval_pending: bool
+    rr_status: Literal["Pending", "Completed"]
+
+@router.post("/{project_id}/simulate")
+def simulate_project(project_id: str, body: ScenarioInputs, db: Session = Depends(get_db)):
+    project = get_project(project_id, db)
+    record = _project_to_record(project)
+    values = body.model_dump()
+    record.update(values)
+    record.update(pending_claims=body.objection_count, legal_cases=body.legal_case_count,
+                  rr_pending=body.rr_status)
+    if record.get("observed_fields") is not None:
+        record["observed_fields"] = sorted(set(record["observed_fields"]) | set(values))
+    missing = validate_prediction_inputs(record)
+    if missing:
+        raise HTTPException(422, "Scenario is missing verified inputs: " + ", ".join(missing))
+    result = predict_project_risk(record)
+    if not result or result.get("status") != "ok":
+        raise HTTPException(503, "Train a model on eligible historical data before running scenarios.")
+    # A scenario never changes the stored project, predictions, or alerts.
+    return {"project_id": project_id, "prediction": result}
+
+
+@router.get("/interventions/all/records")
+def all_interventions(limit: int = Query(500, ge=1, le=500), db: Session = Depends(get_db)):
+    rows = db.query(Intervention, Project.name).join(Project, Intervention.project_id == Project.id).order_by(Intervention.created_at.desc()).limit(limit).all()
+    return [{**intervention_record(item), "project_name": name} for item, name in rows]

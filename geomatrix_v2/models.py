@@ -61,6 +61,8 @@ class Project(Base):
     validation_status = Column(String, default="pending")
     data_classification = Column(String, default="REAL")
 
+    interventions = relationship("Intervention", back_populates="project", cascade="all, delete-orphan")
+
     source_details = Column(JSON)  # Reported source attributes and observed input fields
 
     # provenance
@@ -188,6 +190,9 @@ class Alert(Base):
     detected_at        = Column(DateTime, default=datetime.utcnow)
     recommended_action = Column(Text)
     status             = Column(String, default="Open")
+    assigned_to        = Column(String)
+    due_date           = Column(String)
+    outcome            = Column(Text)
 
     project = relationship("Project", back_populates="alerts")
 
@@ -208,3 +213,16 @@ class DataIngestionLog(Base):
     errors          = Column(JSON)
     error_message   = Column(Text)
     status          = Column(String, default="running")  # running | success | failed
+
+
+class Intervention(Base):
+    __tablename__ = "interventions"
+    id = Column(String, primary_key=True)
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False, index=True)
+    action = Column(String, nullable=False)
+    assigned_to = Column(String, nullable=False)
+    priority = Column(String, nullable=False)
+    due_date = Column(String)
+    note = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    project = relationship("Project", back_populates="interventions")

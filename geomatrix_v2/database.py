@@ -67,6 +67,9 @@ def SessionLocal():
 # New columns added in the real-data upgrade. ALTER TABLE is idempotent because
 # SQLite raises "duplicate column name" which we silently ignore.
 _MIGRATION_STATEMENTS = [
+    "ALTER TABLE alerts ADD COLUMN assigned_to TEXT",
+    "ALTER TABLE alerts ADD COLUMN due_date TEXT",
+    "ALTER TABLE alerts ADD COLUMN outcome TEXT",
     "ALTER TABLE projects ADD COLUMN source_details JSON",
     "ALTER TABLE historical_delay_records ADD COLUMN training_data_version INTEGER DEFAULT 1 NOT NULL",
     "ALTER TABLE projects ADD COLUMN compensation_status TEXT",
