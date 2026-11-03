@@ -125,7 +125,7 @@ test('slow sign-in shows progress and ignores duplicate credentials', { timeout:
     await page.getByRole('button', { name: 'Continue with Google', exact: true }).click();
     await visible(page.getByText('Signing you in…', { exact: true }));
     await page.evaluate(() => window.mockCredential({ credential: 'duplicate' }));
-    await visible(page.getByText('The sign-in service is starting. This may take up to a minute.', { exact: true }));
+    await visible(page.getByText('The sign-in service is starting. This may take up to two minutes.', { exact: true }));
     assert.equal(state.posts, 1);
     release();
     await page.waitForURL('**/dashboard');
