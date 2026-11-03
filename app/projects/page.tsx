@@ -84,7 +84,8 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  useEffect(() => { setSearch(new URLSearchParams(window.location.search).get('search') || ''); }, []);
+  const [dataset,setDataset]=useState<'production'|'all'|'excluded'>('production');
+  useEffect(() => { const qs=new URLSearchParams(window.location.search);setSearch(qs.get('search') || '');if(qs.get('dataset')==='all')setDataset('all'); }, []);
   const [riskFilter, setRiskFilter] = useState('All');
   const [stateFilter, setStateFilter] = useState('All');
   const [stageFilter, setStageFilter] = useState('All');
@@ -109,14 +110,14 @@ export default function Projects() {
     setLoading(true);
     setError('');
     try {
-      const data = await fetchProjects({ limit: 200 });
+      const data = await fetchProjects({ limit: 500, dataset });
       setProjects(data);
     } catch (e) {
       setError(e instanceof ApiError ? `API Error (${e.status}): ${e.message}` : 'Failed to load projects');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [dataset]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -318,7 +319,7 @@ export default function Projects() {
       : <ArrowUpDown size={10} style={{ marginLeft: 4, opacity: 0.4 }} />;
 
   return (
-    <div className="page">
+    <div className="page"><label>Dataset <select className="btn" aria-label="Project dataset" value={dataset} onChange={e=>setDataset(e.target.value as typeof dataset)}><option value="production">Production records</option><option value="excluded">Samples / non-production records</option><option value="all">All records (includes samples)</option></select></label><p className="sub">Samples are preserved for inspection and excluded from production dashboards, maps, analytics, and predictions.</p>
       <div className="head">
         <div>
           <div className="eyebrow"><Filter size={11} /> Portfolio</div>

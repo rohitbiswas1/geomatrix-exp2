@@ -104,7 +104,7 @@ export default function CommandCenter() {
     setLoadError(false);
     const results = await Promise.allSettled([
       withTimeout(fetchDashboardSummary()),
-      withTimeout(fetchProjects({ limit: 100 })),
+      withTimeout(fetchProjects({ limit: 500 })),
       withTimeout(fetchAlerts('Open', 20)),
       withTimeout(fetchModelStatus()),
     ]);
@@ -127,11 +127,11 @@ export default function CommandCenter() {
 
   const derived = useMemo(() => {
     const countByRisk = (level: string) => projects.filter((project) => project.risk_level === level).length;
-    const totalProjects = summary?.total_projects ?? (projects.length || null);
-    const critical = summary?.critical_count ?? (projects.length ? countByRisk('Critical') : null);
-    const high = summary?.high_count ?? (projects.length ? countByRisk('High') : null);
-    const medium = summary?.medium_count ?? (projects.length ? countByRisk('Medium') : null);
-    const low = summary?.low_count ?? (projects.length ? countByRisk('Low') : null);
+    const totalProjects = projects.length;
+    const critical = countByRisk('Critical');
+    const high = countByRisk('High');
+    const medium = countByRisk('Medium');
+    const low = countByRisk('Low');
     const overdue = projects.length ? projects.reduce((total, project) => total + (project.overdue_milestones ?? 0), 0) : null;
     const legal = projects.length ? projects.reduce((total, project) => total + (project.legal_case_count ?? 0), 0) : null;
     const stages = projects.reduce<Record<string, number>>((result, project) => {
@@ -142,7 +142,7 @@ export default function CommandCenter() {
   }, [projects, summary]);
 
   const atRiskProjects = useMemo(() => projects
-    .filter((project) => project.risk_score !== undefined)
+    .filter((project) => project.risk_score != null)
     .sort((a, b) => (b.risk_score ?? -1) - (a.risk_score ?? -1))
     .slice(0, 6), [projects]);
 
@@ -174,13 +174,14 @@ export default function CommandCenter() {
         <div className="command-hero-slogan">Infrastructure<br />today.<br /><strong>A stronger India<br />tomorrow.</strong></div>
       </section>
 
+      <p className="sub">Only production records are counted. Official imports are historical snapshots, not live project status. <Link href="/data">Review provenance and excluded sample records</Link>.</p>
       {loadError && <div className="command-system-warning"><AlertTriangle size={17} /> Data services did not return a verified response. Values below are withheld.</div>}
       {loading ? <div className="command-loading"><RefreshCw size={18} className="command-spin" /> Loading verified portfolio data</div> : (
         <>
           <section className="command-reference-kpis" aria-label="Portfolio summary">
-            <StatCard label="Total projects" value={formatNumber(derived.totalProjects)} detail="Current API portfolio" icon={Target} />
-            <StatCard label="Completed" value={derived.totalProjects != null && derived.overdue != null ? formatNumber(Math.max(0, derived.totalProjects - derived.overdue)) : 'No verified data available'} detail="Derived from milestones" icon={CheckCircle2} tone="green" />
-            <StatCard label="At risk" value={formatNumber((derived.critical ?? 0) + (derived.high ?? 0) || null)} detail="Critical and high risk" icon={Clock3} tone="amber" />
+            <StatCard label="Total projects" value={formatNumber(derived.totalProjects)} detail="Production records · samples excluded" icon={Target} />
+            <StatCard label="Completed" value={formatNumber(projects.filter(p => p.status?.toLowerCase() === 'completed').length)} detail="Recorded completed status" icon={CheckCircle2} tone="green" />
+            <StatCard label="At risk" value={riskTotal ? formatNumber((derived.critical ?? 0) + (derived.high ?? 0)) : 'Not predicted'} detail="Critical and high risk" icon={Clock3} tone="amber" />
             <StatCard label="Open interventions" value={formatNumber(summary?.alerts_open ?? (alerts.length || null))} detail="Require attention" icon={AlertTriangle} tone="red" />
           </section>
 
@@ -193,7 +194,7 @@ export default function CommandCenter() {
             <div className="command-reference-middle">
               <article className="command-panel command-distribution-panel">
                 <div className="command-panel-heading"><div><span className="command-overline">Portfolio exposure</span><h2>Risk distribution</h2></div><Gauge size={19} /></div>
-                <div className="command-distribution"><div className="command-donut-wrap"><div className="command-donut" style={{ '--critical-pct': `${riskPercent(derived.critical)}%`, '--high-pct': `${riskPercent(derived.high)}%`, '--medium-pct': `${riskPercent(derived.medium)}%`, '--low-pct': `${riskPercent(derived.low)}%` } as React.CSSProperties}><strong>{formatNumber(derived.totalProjects)}</strong></div><span>Total projects</span></div><div className="command-distribution-legend">{riskRows.map(({ label, value }) => <div key={label}><i className={`risk-dot ${severityClass(label)}`} /><span>{label}</span><strong>{value == null || !derived.totalProjects ? 'N/A' : `${Math.round((value / derived.totalProjects) * 100)}%`}</strong></div>)}</div></div>
+                <div className="command-distribution"><div className="command-donut-wrap"><div className="command-donut" style={{ background: riskTotal === 0 ? 'var(--line)' : undefined, '--critical-pct': `${riskPercent(derived.critical)}%`, '--high-pct': `${riskPercent(derived.high)}%`, '--medium-pct': `${riskPercent(derived.medium)}%`, '--low-pct': `${riskPercent(derived.low)}%` } as React.CSSProperties}><strong>{formatNumber(derived.totalProjects)}</strong></div><span>{riskTotal} predicted · {projects.length-riskTotal} unclassified</span></div><div className="command-distribution-legend">{riskRows.map(({ label, value }) => <div key={label}><i className={`risk-dot ${severityClass(label)}`} /><span>{label}</span><strong>{value == null || !derived.totalProjects ? 'N/A' : `${Math.round((value / derived.totalProjects) * 100)}%`}</strong></div>)}</div></div>
               </article>
               <article className="command-panel command-timeline-panel">
                 <div className="command-panel-heading"><div><span className="command-overline">Operational flow</span><h2>Acquisition pipeline</h2></div><Link href="/projects" className="command-text-link">View details <ArrowUpRight size={14} /></Link></div>
@@ -202,14 +203,14 @@ export default function CommandCenter() {
             </div>
 
             <aside className="command-reference-aside">
-              <article className="command-panel command-insights-panel"><div className="command-panel-heading"><div><span className="command-overline">Decision queue</span><h2>AI insights</h2></div><Link href="/alerts" className="command-text-link">View all <ArrowUpRight size={14} /></Link></div>{alerts.length === 0 ? <EmptyState /> : <div className="command-insight-list">{alerts.slice(0, 3).map((alert) => <Link href={`/projects/${alert.project_id}`} key={alert.id} className="command-insight"><span className={`command-insight-icon ${severityClass(alert.severity)}`}><AlertTriangle size={15} /></span><span><strong>{unavailable(alert.project_name)}</strong><small>{alert.reason}</small><em>{formatDate(alert.detected_at)}</em></span></Link>)}</div>}</article>
+              <article className="command-panel command-insights-panel"><div className="command-panel-heading"><div><span className="command-overline">Decision queue</span><h2>Predicted alerts</h2></div><Link href="/alerts" className="command-text-link">View all <ArrowUpRight size={14} /></Link></div>{alerts.length === 0 ? <EmptyState message="No model alerts. Open Alerts to review source-reported delays and missing inputs." /> : <div className="command-insight-list">{alerts.slice(0, 3).map((alert) => <Link href={`/projects/${alert.project_id}`} key={alert.id} className="command-insight"><span className={`command-insight-icon ${severityClass(alert.severity)}`}><AlertTriangle size={15} /></span><span><strong>{unavailable(alert.project_name)}</strong><small>{alert.reason}</small><em>{formatDate(alert.detected_at)}</em></span></Link>)}</div>}</article>
               <article className="command-panel command-actions-panel"><div className="command-panel-heading"><div><span className="command-overline">Workflow</span><h2>Quick actions</h2></div></div><div className="command-quick-actions"><Link href="/projects"><Target size={15} /> Project register</Link><Link href="/reports"><FileCheck2 size={15} /> Generate report</Link><Link href="/analytics"><Activity size={15} /> Run analysis</Link><Link href="/data"><Database size={15} /> Upload dataset</Link></div></article>
             </aside>
           </section>
 
           <section className="command-reference-bottom">
-            <article className="command-panel command-table-panel"><div className="command-panel-heading"><div><span className="command-overline">Verified records</span><h2>Recent projects</h2></div><Link href="/projects" className="command-text-link">View all <ArrowUpRight size={14} /></Link></div>{atRiskProjects.length === 0 ? <EmptyState /> : <div className="command-table-wrap"><table className="command-table"><thead><tr><th>Project</th><th>State</th><th>Stage</th><th>Risk</th><th>Updated</th></tr></thead><tbody>{atRiskProjects.slice(0, 4).map((project) => <tr key={project.id}><td><strong>{project.name}</strong><span>{project.project_code}</span></td><td>{unavailable(project.state)}</td><td>{unavailable(project.current_stage)}</td><td><span className={`command-severity ${severityClass(project.risk_level)}`}>{project.risk_score == null ? 'Not available' : `${project.risk_score.toFixed(0)} · ${project.risk_level ?? 'Unclassified'}`}</span></td><td>{formatDate(project.updated_at)}</td></tr>)}</tbody></table></div>}</article>
-            <article className="command-panel command-system-panel"><div className="command-panel-heading"><div><span className="command-overline">Platform health</span><h2>System status</h2></div><span className="command-live-dot" /> </div><div className="command-health-grid"><div><Database size={17} /><span>Data pipeline</span><strong>{summary ? 'Operational' : 'Not available'}</strong></div><div><Activity size={17} /><span>AI models</span><strong>{model ? (model.trained ? 'Operational' : 'Not trained') : 'Not available'}</strong></div><div><MapPinned size={17} /><span>Map services</span><strong>{projects.length ? 'Operational' : 'Not available'}</strong></div></div><div className="command-panel-foot">{lastRefresh ? `Last verified ${lastRefresh.toLocaleTimeString('en-IN')}` : 'Awaiting verification'}</div></article>
+            <article className="command-panel command-table-panel"><div className="command-panel-heading"><div><span className="command-overline">Verified records</span><h2>Scored projects</h2></div><Link href="/projects" className="command-text-link">View all <ArrowUpRight size={14} /></Link></div>{atRiskProjects.length === 0 ? <EmptyState /> : <div className="command-table-wrap"><table className="command-table"><thead><tr><th>Project</th><th>State</th><th>Stage</th><th>Risk</th><th>Updated</th></tr></thead><tbody>{atRiskProjects.slice(0, 4).map((project) => <tr key={project.id}><td><strong>{project.name}</strong><span>{project.project_code}</span></td><td>{unavailable(project.state)}</td><td>{unavailable(project.current_stage)}</td><td><span className={`command-severity ${severityClass(project.risk_level)}`}>{project.risk_score == null ? 'Not available' : `${project.risk_score.toFixed(0)} · ${project.risk_level ?? 'Unclassified'}`}</span></td><td>{formatDate(project.updated_at)}</td></tr>)}</tbody></table></div>}</article>
+            <article className="command-panel command-system-panel"><div className="command-panel-heading"><div><span className="command-overline">Platform health</span><h2>System status</h2></div><span className="command-live-dot" /> </div><div className="command-health-grid"><div><Database size={17} /><span>Data pipeline</span><strong>{summary ? 'Operational' : 'Not available'}</strong></div><div><Activity size={17} /><span>AI models</span><strong>{model ? (model.trained ? 'Operational' : 'Not trained') : 'Not available'}</strong></div><div><MapPinned size={17} /><span>Map services</span><strong>{projects.length ? 'Operational' : 'Not available'}</strong></div></div><div className="command-panel-foot">{lastRefresh ? `Last refreshed ${lastRefresh.toLocaleTimeString('en-IN')}` : 'Awaiting verification'}</div></article>
           </section>
         </>
       )}

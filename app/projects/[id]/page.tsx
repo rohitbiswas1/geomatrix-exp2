@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import SourceDetails from '../../../components/SourceDetails';
 import ExportDropdown, { type ExportFormat } from '../../../components/ExportDropdown';
 import { exportToCSV, exportToExcel, exportToPDF } from '../../../lib/exportUtils';
-import { fetchProject, runPrediction, fetchExplanation, explainWithGemini, validateProject, deleteProject, type ApiProject, type ShapFeature, type PredictionResult } from '../../../lib/apiClient';
+import { fetchModelStatus, fetchProject, runPrediction, fetchExplanation, explainWithGemini, validateProject, deleteProject, type ApiProject, type ShapFeature, type PredictionResult } from '../../../lib/apiClient';
 
 type Intervention = {id:string;action:string;assigned_to:string;priority:string;due_date?:string;note:string;created_at:string};
 type Scenario = {objection_count:number;legal_case_count:number;doc_completeness_pct:number;approval_pending:boolean;rr_status:'Pending'|'Completed'};
@@ -43,13 +43,19 @@ export default function ProjectRiskIntelligence(){
  const p=project;
  return <div className="page">
   <Link href="/projects">← Back to Projects</Link><div className="head"><div><div className="eyebrow">{p.project_code}</div><h1 className="h1">{p.name}</h1><p className="sub">{p.district}, {p.state} · {p.authority}</p></div><div className="actions" style={{flexWrap:'wrap'}}>
-   <button className="btn primary" disabled={busy||missing.length>0} onClick={()=>action(async()=>{const r=await runPrediction(id);setFactors(r.prediction.shap_features||[]);await load();setNotice('Prediction saved.');})}>{busy?'Working…':'Run Prediction'}</button>
-   <Link className="btn" href={'/projects?search='+encodeURIComponent(p.project_code)}>Edit in Projects</Link><ExportDropdown onExport={exportProject}/>
+   <button className="btn primary" disabled={busy} onClick={()=>action(async()=>{
+    if(p.data_classification!=='REAL'){setNotice('This is a sample record, excluded from production predictions. Import a genuine project with source provenance in Data Management.');return;}
+    if(missing.length){setNotice('Record the missing acquisition inputs below, then check Model Intelligence training readiness.');return;}
+    const model=await fetchModelStatus();if(!model.trained){setNotice('No eligible trained model is available. Upload real labeled acquisition history in Data Management and train it in Model Intelligence.');return;}
+    const r=await runPrediction(id);setFactors(r.prediction.shap_features||[]);await load();setNotice('Prediction saved.');})}>{busy?'Working…':'Run Prediction'}</button>
+   <Link className="btn" href={'/projects?search='+encodeURIComponent(p.project_code)+'&dataset=all'}>Edit in Projects</Link><ExportDropdown onExport={exportProject}/>
    <button className="btn" disabled={busy} onClick={()=>{if(window.confirm('Delete audit or project record "'+p.name+'"?'))void action(async()=>{await deleteProject(id);window.location.assign('/projects');});}}>Delete Project</button>
   </div></div>
   {error&&<p role="alert" className="error-alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
+  {p.data_classification!=='REAL'&&<p role="status" className="error-alert">Sample / non-production record. Excluded from dashboard totals and production predictions. <Link href="/data">Review data provenance</Link>.</p>}
+  <p><Link href="/model">Check model readiness</Link> · <Link href="/data?type=historical">Upload real historical training records</Link></p>
   {missing.length>0&&<p role="status">Prediction needs recorded inputs: {missing.join(', ')}. Edit the project to supply them.</p>}
-  <div className="grid three">{[['Risk score',p.risk_score==null?'Not predicted':p.risk_score+'/100'],['Risk level',p.risk_level||'Unclassified'],['Delay probability',p.delay_probability==null?'Not predicted':(p.delay_probability*100).toFixed(1)+'%'],['Current stage',p.current_stage||'Not recorded'],['Land required',p.land_required+' ha'],['Acquired land',p.land_acquired+' ha']].map(([label,value])=><div className="kpi" key={label}><div className="label">{label}</div><div className="value" style={{fontSize:20}}>{value}</div></div>)}</div>
+  <div className="grid three">{[['Risk score',p.risk_score==null?'Not predicted':p.risk_score+'/100'],['Risk level',p.risk_level||'Unclassified'],['Delay probability',p.delay_probability==null?'Not predicted':(p.delay_probability*100).toFixed(1)+'%'],['Current stage',p.current_stage||'Not recorded'],['Land required',p.land_required.toLocaleString('en-IN',{maximumFractionDigits:3})+' ha'],['Acquired land',p.land_acquired.toLocaleString('en-IN',{maximumFractionDigits:3})+' ha']].map(([label,value])=><div className="kpi" key={label}><div className="label">{label}</div><div className="value" style={{fontSize:20}}>{value}</div></div>)}</div>
   <div className="actions" style={{margin:'18px 0',flexWrap:'wrap'}}>{['AI Risk Analysis','Forecast & Prediction','What-If Simulator','Interventions','Acquisition Pipeline','Data Lineage'].map(t=><button className="btn" key={t} aria-pressed={t===tab} onClick={()=>setTab(t)}>{t}</button>)}</div>
   {tab==='AI Risk Analysis'&&<section className="panel"><h2>Risk explanation</h2>{factors.length?<ul>{factors.map(f=><li key={f.feature}>{f.display_name||f.feature}: {f.shap_value.toFixed(4)} · {f.description}</li>)}</ul>:<p>No active model explanation is available. Run a prediction after training the model on eligible historical data.</p>}<button className="btn" disabled={busy} onClick={()=>action(async()=>{const result=await explainWithGemini({project:p as unknown as Record<string,unknown>,shap_features:factors});setSummary(result.summary);})}>Generate AI explanation</button>{summary&&<p>{summary}</p>}</section>}
   {tab==='Forecast & Prediction'&&<section className="panel"><h2>Stored prediction history</h2>{history.length?<div className="tablewrap"><table className="table"><thead><tr><th>Generated</th><th>Risk score</th><th>Risk level</th></tr></thead><tbody>{history.map(h=><tr key={h.id}><td>{new Date(h.predicted_at).toLocaleString('en-IN')}</td><td>{h.risk_score}</td><td>{h.risk_level}</td></tr>)}</tbody></table></div>:<p>No predictions have been saved for this project.</p>}<p>Delay-day forecasts are unavailable without a validated regression model. No schedule savings are inferred.</p></section>}

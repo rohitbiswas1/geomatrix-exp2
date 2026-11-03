@@ -1,4 +1,5 @@
 'use client';
+import PortfolioEvidence from '../../components/PortfolioEvidence';
 
 import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
@@ -145,6 +146,7 @@ export default function AlertsPage() {
         </div>
       </div>
 
+      <PortfolioEvidence mode="reviews"/>
       {/* KPI Tiles — clickable filters */}
       <div className="grid kpis" style={{ marginBottom: 18 }}>
         {([

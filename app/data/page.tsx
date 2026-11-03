@@ -1,4 +1,5 @@
 'use client';
+import PortfolioEvidence from '../../components/PortfolioEvidence';
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Upload, CheckCircle2, Database, AlertCircle, RefreshCw, FileText, Trash2 } from 'lucide-react';
@@ -61,6 +62,7 @@ export default function DataPage() {
   }, []);
 
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("type") === "historical") setUploadDataType("historical");
     loadDataInfo();
   }, [loadDataInfo]);
 
@@ -108,21 +110,21 @@ export default function DataPage() {
     const duplicates = files.reduce((sum, file) => sum + (file.result?.records_duplicated || 0), 0);
     const failedRecords = files.reduce((sum, file) => sum + (file.errors || 0), 0);
     const hasData = files.length > 0;
-    const validRecords = imported;
+    const validRecords = imported + duplicates;
     const score = totalRecords > 0 ? Math.round((validRecords / totalRecords) * 1000) / 10 : 0;
     return [
       { label: 'Total Records', value: totalRecords.toLocaleString(), color: 'var(--ink)', note: hasData ? 'From uploaded datasets' : 'No data uploaded' },
       { label: 'Rejected Records', value: failedRecords.toLocaleString(), color: 'var(--amber)', note: hasData ? 'See row errors in the upload results' : 'Waiting for upload' },
-      { label: 'Duplicates Found', value: duplicates.toLocaleString(), color: 'var(--orange)', note: hasData ? 'Existing records skipped' : 'Waiting for upload' },
+      { label: 'Already Present', value: duplicates.toLocaleString(), color: 'var(--orange)', note: hasData ? 'Existing records skipped' : 'Waiting for upload' },
       { label: 'Invalid Coordinates', value: 'N/A', color: 'var(--red)', note: hasData ? 'Invalid values are listed in row errors' : 'Waiting for upload' },
-      { label: 'Import Success', value: hasData ? `${score}%` : 'N/A', color: 'var(--green)', note: hasData ? 'Imported / submitted records' : 'Waiting for upload' },
-      { label: 'Records Imported', value: validRecords.toLocaleString(), color: 'var(--blue)', note: hasData ? 'Saved to the database' : 'No records imported' },
+      { label: 'Records Accepted', value: hasData ? `${score}%` : 'N/A', color: 'var(--green)', note: hasData ? 'New + already present / submitted records' : 'Waiting for upload' },
+      { label: 'Records Imported', value: imported.toLocaleString(), color: 'var(--blue)', note: hasData ? 'Saved to the database' : 'No records imported' },
     ];
   }, [files]);
   const completenessRows = useMemo(() => files.map(file => ({
     id: file.id,
     label: file.name,
-    pct: file.result?.records_fetched ? Math.round(file.result.records_saved / file.result.records_fetched * 100) : 0,
+    pct: file.result?.records_fetched ? Math.round((file.result.records_saved + (file.result.records_duplicated || 0)) / file.result.records_fetched * 100) : 0,
     color: file.status === 'ready' ? 'var(--green)' : 'var(--muted)',
   })), [files]);
 
@@ -168,6 +170,7 @@ export default function DataPage() {
         </div>
       </div>
 
+      <PortfolioEvidence mode="quality"/>
       {/* Tabs */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 16, borderBottom: '2px solid var(--line)' }}>
         {([
@@ -336,7 +339,7 @@ export default function DataPage() {
           <div className="panel">
             <div className="paneltitle" style={{ marginBottom: 14 }}>Import guidance</div>
             <p className="muted" style={{ fontSize: 12 }}>Projects require an ID, name, and state. Other missing text fields use Unknown.</p>
-            <a className="btn" href="/templates/project-records.csv" download>Download project CSV template</a>
+            <a className="btn" href="/templates/project-records.csv" download>Download project CSV template</a> <a className="btn" href="/templates/historical-records.csv" download>Download historical CSV template</a>
             {([
               ['CSV', 'Project records, compensation tables, legal case registers', 'var(--green)'],
               ['Excel', 'Save the worksheet as UTF-8 CSV before importing.', 'var(--blue)'],
@@ -372,8 +375,8 @@ export default function DataPage() {
           <div className="panel">
             <div className="panelhead">
               <div>
-                <div className="paneltitle">New Records Saved per Upload</div>
-                <div className="muted">Saved / submitted records in this session; duplicates are skipped</div>
+                <div className="paneltitle">Upload results</div>
+                <div className="muted">New records are saved. Already-present records are accepted without creating duplicates.</div>
               </div>
             </div>
             {completenessRows.length > 0 ? completenessRows.map(({ id, label, pct, color }) => (

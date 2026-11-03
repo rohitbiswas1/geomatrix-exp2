@@ -236,6 +236,7 @@ export interface ProjectValidation {
 // â”€â”€ Project endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function fetchProjects(params?: {
+  dataset?: "production" | "all" | "excluded";
   state?: string;
   district?: string;
   stage?: string;
@@ -243,12 +244,14 @@ export async function fetchProjects(params?: {
   limit?: number;
 }): Promise<ApiProject[]> {
   const qs = new URLSearchParams();
+  if (params?.dataset) qs.set('dataset', params.dataset);
   if (params?.state) qs.set('state', params.state);
   if (params?.district) qs.set('district', params.district);
   if (params?.stage) qs.set('stage', params.stage);
   if (params?.risk_level) qs.set('risk_level', params.risk_level);
   if (params?.limit) qs.set('limit', String(params.limit));
-  return apiFetch<ApiProject[]>(`/api/projects${qs.toString() ? '?' + qs.toString() : ''}`);
+  const rows=await apiFetch<ApiProject[]>(`/api/projects${qs.toString() ? '?' + qs.toString() : ''}`);
+  return params?.dataset === 'all' ? rows : params?.dataset === 'excluded' ? rows.filter(p=>p.data_classification !== 'REAL') : rows.filter(p=>p.data_classification === 'REAL');
 }
 
 export async function fetchProject(id: string): Promise<ApiProject> {
