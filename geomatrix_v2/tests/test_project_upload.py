@@ -57,7 +57,11 @@ def test_exact_twenty_row_user_sample_imports_and_survives_new_client(client):
         assert project.affected_families == 0  # Landowners are not inferred to be families.
         assert project.risk_level is None and project.risk_score is None
         assert project.data_classification == 'TEST'
-    assert len(TestClient(app).get('/api/projects').json()) == 20
+    assert TestClient(app).get('/api/projects').json() == []
+    assert len(TestClient(app).get('/api/projects?dataset=excluded').json()) == 20
+    sample = TestClient(app).get('/api/projects?dataset=excluded').json()[0]
+    assert client.post('/api/projects/'+sample['id']+'/predict-risk').status_code == 409
+    assert client.get('/api/map/geojson').json()['features'] == []
     repeated = client.post('/api/ingest/upload?data_type=projects', files={'file': (path.name, path.read_bytes())}).json()
     assert repeated['records_saved'] == 0
     assert repeated['records_duplicated'] == repeated['records_skipped'] == 20
@@ -168,3 +172,15 @@ def test_official_bundle_import_preserves_source_and_blocks_unknown_prediction(c
     assert "affected_families" not in detail["source_details"]["missing_fields"]
     assert detail["source_details"]["original_cost_cr"] == 499
     assert client.get(f"/api/projects/{item['id']}/validate").json()["can_predict"] is True
+
+
+def test_production_map_never_invents_coordinates(client):
+    with SessionLocal() as db:
+        db.add(Project(id='real-unlocated',project_code='UNLOCATED',name='Official',state='West Bengal',district='Unknown',authority='Agency',project_type='Road',data_classification='REAL'))
+        db.add(Project(id='sample-located',project_code='SAMPLE',name='Sample',state='WB',district='Kolkata',authority='Agency',project_type='Road',data_classification='TEST',latitude=22.5,longitude=88.3))
+        db.commit()
+    assert len(client.get('/api/projects').json()) == 1
+    assert len(client.get('/api/projects?dataset=all').json()) == 2
+    assert client.get('/api/projects/dashboard-summary').json()['total_projects'] == 1
+    assert client.get('/api/map/geojson').json()['features'] == []
+    assert client.get('/api/map/summary').json()['projects_without_coordinates'] == 1

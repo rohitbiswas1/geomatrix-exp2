@@ -315,7 +315,7 @@ def _save_historical_row(db, row, source_name, source_url, errors, row_number):
         affected_families=_coerce_int(_field_value(row, "affected_families", "families_affected", "families")),
         pending_claims=_coerce_int(_field_value(row, "pending_claims", "objection_count", "claims_pending")),
         legal_cases=_coerce_int(_field_value(row, "legal_cases", "case_count", "court_cases")),
-        doc_completeness_pct=_coerce_float(_field_value(row, "doc_completeness_pct", "document_completeness_pct", "physical_progress_pct"), default=50.0),
+        doc_completeness_pct=_coerce_float(_field_value(row, "doc_completeness_pct", "document_completeness_pct"), default=50.0),
         approval_pending=approval_pending,
         rr_pending=_coerce_int(_field_value(row, "rr_pending", "rr_pending_count")),
         overdue_milestones=_coerce_int(_field_value(row, "overdue_milestones", "overdue_milestone_count")),

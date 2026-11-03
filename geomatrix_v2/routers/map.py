@@ -10,23 +10,6 @@ from schemas import GeoFeatureCollection, GeoFeature
 router = APIRouter(prefix="/api/map", tags=["map"])
 
 
-STATE_COORDINATES = {
-    "andhra pradesh": (15.9129, 79.7400),
-    "telangana": (18.1124, 79.0193),
-    "odisha": (20.9517, 85.0985),
-    "bihar": (25.0961, 85.3131),
-    "punjab": (31.1471, 75.3412),
-    "delhi": (28.7041, 77.1025),
-    "gujarat": (22.2587, 71.1924),
-    "karnataka": (15.3173, 75.7139),
-    "west bengal": (22.9868, 87.8550),
-    "maharashtra": (19.7515, 75.7139),
-    "chhattisgarh": (21.2787, 81.8661),
-    "uttarakhand": (30.0668, 79.0193),
-}
-DEFAULT_COORDS = (20.5937, 78.9629)
-
-
 @router.get("/geojson", response_model=GeoFeatureCollection)
 def get_geojson(
     risk_level: Optional[str] = Query(None),
@@ -34,9 +17,9 @@ def get_geojson(
 ):
     """
     Returns GeoJSON FeatureCollection of real project coordinates from DB.
-    Includes state centroid fallbacks for projects without explicit lat/lng in CSV.
+    Projects without recorded coordinates are omitted; no locations are inferred.
     """
-    q = db.query(Project)
+    q = db.query(Project).filter(Project.data_classification == "REAL")
     if risk_level:
         q = q.filter(Project.risk_level == risk_level)
 
@@ -46,12 +29,8 @@ def get_geojson(
     for idx, p in enumerate(projects):
         lat = p.latitude
         lng = p.longitude
-        if not lat or not lng or lat == 0.0 or lng == 0.0:
-            st = (p.state or "").strip().lower()
-            base_lat, base_lng = STATE_COORDINATES.get(st, DEFAULT_COORDS)
-            # Add small deterministic offset per project index so markers don't overlap exactly
-            lat = base_lat + ((idx % 5) - 2) * 0.15
-            lng = base_lng + ((idx // 5) % 5 - 2) * 0.15
+        if lat is None or lng is None:
+            continue
 
         feat = GeoFeature(
             geometry={
@@ -84,12 +63,10 @@ def get_geojson(
 
 @router.get("/summary")
 def map_summary(db: Session = Depends(get_db)):
-    total = db.query(Project).count()
-    with_coords = db.query(Project).filter(
+    total = db.query(Project).filter(Project.data_classification == "REAL").count()
+    with_coords = db.query(Project).filter(Project.data_classification == "REAL").filter(
         Project.latitude.isnot(None),
         Project.longitude.isnot(None),
-        Project.latitude != 0.0,
-        Project.longitude != 0.0,
     ).count()
     return {
         "total_projects": total,

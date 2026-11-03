@@ -45,7 +45,7 @@ def _project_to_record(p: Project) -> dict:
 @router.get("/dashboard-summary", response_model=DashboardSummary)
 def dashboard_summary(db: Session = Depends(get_db)):
     """Return real counts for the dashboard from database records."""
-    total = db.query(Project).count()
+    total = db.query(Project).filter(Project.data_classification == "REAL").count()
     if total == 0:
         return DashboardSummary(
             total_projects=0, critical_count=0, high_count=0,
@@ -54,12 +54,12 @@ def dashboard_summary(db: Session = Depends(get_db)):
             data_available=False, message="No projects in database yet."
         )
 
-    critical = db.query(Project).filter(Project.risk_level == "Critical").count()
-    high = db.query(Project).filter(Project.risk_level == "High").count()
-    medium = db.query(Project).filter(Project.risk_level == "Medium").count()
-    low = db.query(Project).filter(Project.risk_level == "Low").count()
+    critical = db.query(Project).filter(Project.data_classification == "REAL").filter(Project.risk_level == "Critical").count()
+    high = db.query(Project).filter(Project.data_classification == "REAL").filter(Project.risk_level == "High").count()
+    medium = db.query(Project).filter(Project.data_classification == "REAL").filter(Project.risk_level == "Medium").count()
+    low = db.query(Project).filter(Project.data_classification == "REAL").filter(Project.risk_level == "Low").count()
 
-    projects = db.query(Project).all()
+    projects = db.query(Project).filter(Project.data_classification == "REAL").all()
     total_land = sum((p.land_required or 0) for p in projects)
     total_families = sum((p.affected_families or 0) for p in projects)
 
@@ -90,9 +90,14 @@ def list_projects(
     stage: Optional[str] = Query(None),
     risk_level: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=500),
+    dataset: str = Query("production", pattern="^(production|all|excluded)$"),
     db: Session = Depends(get_db)
 ):
     q = db.query(Project)
+    if dataset == "production":
+        q = q.filter(Project.data_classification == "REAL")
+    elif dataset == "excluded":
+        q = q.filter(Project.data_classification != "REAL")
     if state:
         q = q.filter(Project.state.ilike(f"%{state}%"))
     if district:
@@ -196,6 +201,8 @@ def predict_risk(project_id: str, db: Session = Depends(get_db)):
     if not p:
         raise HTTPException(404, "Project not found")
 
+    if p.data_classification != "REAL":
+        raise HTTPException(409, "Sample and non-production records cannot produce production predictions.")
     record = _project_to_record(p)
 
     # Validate required fields before calling the model
@@ -342,6 +349,8 @@ class ScenarioInputs(BaseModel):
 @router.post("/{project_id}/simulate")
 def simulate_project(project_id: str, body: ScenarioInputs, db: Session = Depends(get_db)):
     project = get_project(project_id, db)
+    if project.data_classification != "REAL":
+        raise HTTPException(409, "Sample records cannot be used for production scenarios.")
     record = _project_to_record(project)
     values = body.model_dump()
     record.update(values)
