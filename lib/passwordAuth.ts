@@ -1,3 +1,4 @@
+import { waitForAuthBackend } from './authBackend';
 import { authErrorMessage } from './authErrors';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
@@ -16,10 +17,11 @@ export async function passwordAuth(request: Request, action: 'login' | 'register
     return jsonError(action === 'register' ? 'Enter your name, email, and a password of 12–128 characters.' : 'Enter your email and password.', 400);
   }
   try {
+    await waitForAuthBackend();
     const upstream = await fetch(backendUrl(`/api/auth/${action}`), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: body.email, password: body.password, ...(action === 'register' ? { name: body.name } : {}) }),
-      cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(70000),
+      cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(15000),
     });
     const payload = await upstream.json();
     if (!upstream.ok) {

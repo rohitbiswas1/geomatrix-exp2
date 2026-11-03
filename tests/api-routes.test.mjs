@@ -159,6 +159,7 @@ test('password registration and login set HttpOnly sessions without returning cr
   for (const action of ['login', 'register']) {
     jar.clear();
     mock.method(globalThis, 'fetch', async (url, init) => {
+      if (url === 'https://api.example.com/health') return Response.json({ status: 'ok' });
       assert.equal(url, `https://api.example.com/api/auth/${action}`);
       const body = JSON.parse(init.body);
       assert.equal(body.email, 'officer@example.com');
@@ -187,7 +188,7 @@ test('password auth rejects invalid input and cross-origin requests before upstr
 
 test('password auth preserves errors and never saves a cookie on failure', async () => {
   const { passwordAuth } = await import('../lib/passwordAuth.ts');
-  mock.method(globalThis, 'fetch', async () => Response.json({ detail: 'Too many attempts.' }, { status: 429 }));
+  mock.method(globalThis, 'fetch', async url => url.endsWith('/health') ? Response.json({ status: 'ok' }) : Response.json({ detail: 'Too many attempts.' }, { status: 429 }));
   const response = await passwordAuth(request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'a@b.com', password: 'wrong' }) }), 'login');
   assert.equal(response.status, 429);
   assert.equal((await response.json()).error, 'Too many attempts.');
@@ -207,9 +208,45 @@ test('structured authentication errors stay readable and never echo validation i
 
 test('unavailable registration endpoint explains the deployment problem', async () => {
   const { passwordAuth } = await import('../lib/passwordAuth.ts');
-  mock.method(globalThis, 'fetch', async () => Response.json({ detail: 'Not Found' }, { status: 404 }));
+  mock.method(globalThis, 'fetch', async url => url.endsWith('/health') ? Response.json({ status: 'ok' }) : Response.json({ detail: 'Not Found' }, { status: 404 }));
   const response = await passwordAuth(request('/api/auth/register', { method: 'POST', body: JSON.stringify({ email: 'a@b.com', password: 'A long test passphrase', name: 'Test' }) }), 'register');
   assert.equal(response.status, 404);
   assert.equal((await response.json()).error, 'Account creation is not active on this deployment yet. Please use Google sign-in.');
+  assert.equal(jar.size, 0);
+});
+
+test('cold backend readiness retries only read-only health requests', async () => {
+  const { waitForAuthBackend } = await import('../lib/authBackend.ts');
+  let calls = 0;
+  mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(url, 'https://api.example.com/health');
+    assert.equal(init.method, undefined);
+    assert.equal(init.cache, 'no-store');
+    if (++calls === 1) return new Response('<html>Starting</html>', { status: 503 });
+    if (calls === 2) throw new TypeError('connection reset');
+    return Response.json({ status: 'ok' });
+  });
+  await waitForAuthBackend({ timeoutMs: 1000, retryMs: 1 });
+  assert.equal(calls, 3);
+});
+
+test('backend readiness has a bounded timeout', async () => {
+  const { waitForAuthBackend } = await import('../lib/authBackend.ts');
+  mock.method(globalThis, 'fetch', async () => new Response('Starting', { status: 503 }));
+  await assert.rejects(waitForAuthBackend({ timeoutMs: 15, retryMs: 1 }), /did not become ready/);
+});
+
+test('lost registration response never replays the account creation request', async () => {
+  const { passwordAuth } = await import('../lib/passwordAuth.ts');
+  let posts = 0;
+  mock.method(globalThis, 'fetch', async url => {
+    if (url.endsWith('/health')) return Response.json({ status: 'ok' });
+    posts++;
+    throw new TypeError('response lost after commit');
+  });
+  const response = await passwordAuth(request('/api/auth/register', { method: 'POST',
+    body: JSON.stringify({ email: 'test@example.com', password: 'A long test passphrase', name: 'Test' }) }), 'register');
+  assert.equal(response.status, 503);
+  assert.equal(posts, 1);
   assert.equal(jar.size, 0);
 });

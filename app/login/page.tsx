@@ -86,7 +86,7 @@ export default function Login() {
     const controller = new AbortController();
     signInRequest.current = controller;
     const slowTimer = window.setTimeout(() => { if (active.current) setSlowSignIn(true); }, 7000);
-    const timeout = window.setTimeout(() => controller.abort(), 75000);
+    const timeout = window.setTimeout(() => controller.abort(), 145000);
     try {
       const response = await fetch(endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -223,7 +223,7 @@ export default function Login() {
             </div>
             {!isGoogleAuthReady && googleSignInUrl && <p className="auth-hint auth-preview-note">Google sign-in opens the live GEOMATRIX site.</p>}
             {sdkState === 'error' && <button type="button" className="google-fallback-btn" disabled={busy} onClick={() => { setError(''); setSdkState('loading'); setRetry(value => value + 1); }}>Retry Google sign-in</button>}
-            <p className="sign-in-notice" role="status" aria-live="polite">{slowSignIn ? 'The sign-in service is starting. This may take up to a minute.' : notice}</p>
+            <p className="sign-in-notice" role="status" aria-live="polite">{slowSignIn ? 'The sign-in service is starting. This may take up to two minutes.' : notice}</p>
             <p className="auth-switch">{registering ? 'Already have an account?' : 'New to GEOMATRIX?'} <button type="button" disabled={busy} onClick={() => switchMode(registering ? 'login' : 'register')}>{registering ? 'Sign in' : 'Create an account'}</button></p>
             <div className="auth-security"><ShieldCheck size={14} /><span>Protected sign-in · Secure Google sign-in</span></div>
           </div>
